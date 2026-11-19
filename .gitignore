@@ -1,0 +1,19 @@
+# ESP-IDF build output and downloaded components (dependencies.lock is committed)
+firmware/build/
+firmware/managed_components/
+
+# Local config. Holds CONFIG_TW_DEV_DOWNLOAD_ENDPOINT=y on the dev machine; the shared defaults are sdkconfig.defaults
+firmware/sdkconfig
+firmware/sdkconfig.old
+
+# Device-specific certificate, downloaded from the board
+certs/
+
+# Host test binary
+test/host/t
+test/host/*.dSYM/
+
+# Editor and Python leftovers
+.obsidian/
+__pycache__/
+.DS_Store

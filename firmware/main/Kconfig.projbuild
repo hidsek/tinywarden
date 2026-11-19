@@ -1,0 +1,33 @@
+menu "tinywarden"
+
+choice TW_LED_KIND
+    prompt "LED on GPIO48"
+    default TW_LED_PLAIN
+    help
+        What the board has on GPIO48. The ESP32-S3 SuperMini used for development has a plain LED
+        there (it shows red). Some other boards have a WS2812 RGB LED. Driving a plain LED with WS2812
+        data only makes it glow faintly without blinking.
+
+config TW_LED_PLAIN
+    bool "Plain LED, on when the pin is high"
+
+config TW_LED_WS2812
+    bool "WS2812 RGB LED"
+endchoice
+
+config TW_DEV_DOWNLOAD_ENDPOINT
+    bool "Development: allow rebooting into download mode over the network"
+    default n
+    help
+        Adds POST /tw/dev/download-mode, which reboots the chip into the ROM download mode so it can be
+        flashed without pressing BOOT+RST. Anything on the Mac can call it, and download mode lets the
+        flash be read, so never enable this on a device that holds a real vault.
+
+config TW_DEV_SKIP_BUTTON
+    bool "Development: do not wait for the BOOT button (auto-approve)"
+    default n
+    help
+        Registration, login and wipe are approved without the button, so tests can run unattended.
+        Never enable this on a device that holds a real vault.
+
+endmenu

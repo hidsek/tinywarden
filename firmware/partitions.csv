@@ -1,0 +1,6 @@
+# Name,   Type, SubType, Offset,   Size      (4MB flash: ESP32-S3FH4R2 / SuperMini)
+nvs,      data, nvs,     0x9000,   0x6000
+phy_init, data, phy,     0xf000,   0x1000
+factory,  app,  factory, 0x10000,  0x100000
+# storage: raw log store (SPEC 5), no filesystem
+storage,  data, 0x40,    0x110000, 0x2F0000

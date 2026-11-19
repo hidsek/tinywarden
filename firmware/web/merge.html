@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>tinywarden 保管庫をまとめる</title>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--mute:#666;--line:#ddd;--ok:#1a7f37;--ng:#c62828;--hi:#fff4d6;--card:#f6f6f6}
+@media(prefers-color-scheme:dark){:root{--bg:#161616;--fg:#eee;--mute:#999;--line:#333;--ok:#4caf50;--ng:#ef5350;--hi:#3a3220;--card:#202020}}
+body{background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,'Hiragino Sans','Hiragino Kaku Gothic ProN',sans-serif;max-width:960px;margin:0 auto;padding:16px}
+h1{font-size:20px}h2{font-size:16px;margin-top:24px}
+.mute{color:var(--mute)}.ng{color:var(--ng)}.ok{color:var(--ok)}
+.sides{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:640px){.sides{grid-template-columns:1fr}}
+.side{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px}
+.side h2{margin-top:0}
+input,select,button{font:inherit}
+input[type=password],input[type=email]{width:100%;box-sizing:border-box}
+table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left;vertical-align:top}
+th{color:var(--mute);font-weight:normal}
+.kind{font-size:12px;border:1px solid var(--line);border-radius:4px;padding:0 4px;white-space:nowrap}
+.differ .kind{background:var(--hi)}
+.diff{font-size:13px}
+.vals{font-size:13px;margin:4px 0}
+.vals td{padding:2px 4px}
+code{font-size:12px;word-break:break-all}
+.bar{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;align-items:center}
+.sticky{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);padding:6px 0;z-index:1}
+.chip{border:1px solid var(--line);border-radius:12px;padding:1px 10px;background:var(--bg);color:var(--fg);cursor:pointer}
+.chip.on{border-color:var(--fg);font-weight:bold}
+.banner{padding:10px 12px;border-radius:8px;margin:8px 0;font-weight:bold}
+.banner.ok{background:var(--card);color:var(--ok);border:1px solid var(--ok)}
+.banner.hi{background:var(--hi)}
+.drow{display:grid;grid-template-columns:1fr 84px 1fr;gap:6px;margin:6px 0}
+.dhead{font-weight:bold;color:var(--mute)}
+.card{border:1px solid var(--line);border-radius:6px;padding:6px 8px;cursor:pointer;opacity:.45;font-size:13px}
+.card.sel{border:2px solid var(--ok);opacity:1}
+.card.empty{border-style:dashed;cursor:default;opacity:.6;display:flex;align-items:center;justify-content:center}
+.card .t{font-weight:bold;font-size:14px;word-break:break-all}
+.card .f{display:grid;grid-template-columns:7em 1fr;gap:0 6px}
+.card .f div{word-break:break-all;white-space:pre-wrap}
+.card .d{background:var(--hi)}
+.card .keep{float:right;color:var(--ok);font-weight:bold}
+.mid{display:flex;flex-direction:column;gap:4px;justify-content:center}
+.mid button{font-size:12px}
+.mid button.on{font-weight:bold;border:2px solid var(--fg)}
+.folder{border-top:1px solid var(--line);padding:6px 0}
+.folder>summary{cursor:pointer;padding:4px 0}
+.opts{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:8px 0}
+.opt{border:1px solid var(--line);border-radius:8px;padding:10px 12px;cursor:pointer}
+.opt.sel{border:2px solid var(--ok)}
+.opt.off{opacity:.45;cursor:default}
+.opt h3{margin:0 0 4px;font-size:15px}
+.opt p{margin:4px 0;font-size:13px}
+@media(max-width:640px){.drow{grid-template-columns:1fr}.mid{flex-direction:row}.opts{grid-template-columns:1fr}}
+</style>
+<h1>保管庫をまとめる</h1>
+<p>2つの保管庫を比べて、項目ごとにどちらを残すか選び、1つの<b>パスワード付きエクスポート</b>にまとめます。
+計算はすべてこのページの中で行い、中身は基板にもネットにも送りません（ページを閉じれば消えます）。
+片方だけ開いて保存すれば、tinywardenの控えをインポートできる形に変えることもできます。
+<a href="/">管理ページへ戻る</a></p>
+
+<div class="sides">
+  <section class="side" id="sideA"><h2>A</h2></section>
+  <section class="side" id="sideB"><h2>B</h2></section>
+</div>
+
+<section id="cmp" hidden>
+  <h2>比べた結果</h2>
+  <div class="sticky">
+    <div class="bar" id="chips"></div>
+    <div class="bar"><span id="preview"></span></div>
+  </div>
+  <div id="banner"></div>
+  <div class="bar">
+    <span class="mute">「違う」をまとめて:</span>
+    <button data-all="newer">新しい方</button><button data-all="a">全部A</button><button data-all="b">全部B</button><button data-all="both">両方残す</button>
+    <span class="mute">／</span><button id="reveal">隠した値を見せる</button>
+  </div>
+  <p class="mute">残す方のカードを押して選びます（緑の枠が残る方）。真ん中で「両方」「捨てる」も選べます。色の付いた行が、AとBで違う欄です。</p>
+  <div class="drow dhead"><div id="labelA">A</div><div></div><div id="labelB">B</div></div>
+  <div id="rows"></div>
+</section>
+
+<section id="out" hidden>
+  <h2>保存</h2>
+  <p class="mute">どちらかを選んでから、ファイルのパスワードを決めて保存します。できるのは、パスワード付きのエクスポートです。インポートでファイルを開くのはアプリなので、相手がBitwardenでもVaultwardenでもtinywardenでも読めます。</p>
+  <div class="opts">
+    <div class="opt" id="optAll">
+      <h3>全部まとめる</h3>
+      <p id="allInfo"></p>
+      <p class="mute">選んだとおりの全体。<b>空のアカウント</b>にインポートする（新しく作ったアカウント、または全部消して作り直したtinywarden）。中身があるところに入れると二重になる。</p>
+    </div>
+    <div class="opt" id="optDelta">
+      <h3>足りない分だけ</h3>
+      <p><label><input type="radio" name="to" value="a" id="toA"> <span id="toALabel">Aに入れる</span></label><br>
+      <label><input type="radio" name="to" value="b" id="toB"> <span id="toBLabel">Bに入れる</span></label></p>
+      <p class="mute">相手にない項目と、違う項目のうち相手でない方を選んだもの。<b>今のアカウントにそのまま</b>インポートする。インポートは上書きできないので、古い方は手で消す（保存すると一覧が出る）。AとBの両方を開いたときだけ選べる。</p>
+    </div>
+  </div>
+  <p><label>ファイルのパスワード（12文字以上）<br><input id="op1" type="password" autocomplete="new-password"></label><br>
+  <label>もう一度<br><input id="op2" type="password" autocomplete="new-password"></label><br>
+  <label>ファイルの鍵の作り方 <select id="okdf"><option value="argon2id">Argon2id（おすすめ。今の公式アプリはどれも読める）</option>
+  <option value="pbkdf2">PBKDF2 60万回（古いアプリや、Bitwarden以外のツールで読むとき）</option></select></label></p>
+  <p><button id="save">全部まとめて保存</button></p>
+  <p id="om"></p>
+  <p class="mute">AとBでパスワードが違う項目は、選ばなかった方のパスワードを、残した項目の「パスワードの履歴」に入れておきます（間違えて選んでも、あとから古いパスワードを確かめられます）。</p>
+  <div id="removeBox" hidden><h2 id="removeTitle"></h2><p class="mute">インポートしたあとで、拡張機能やWeb保管庫から消してください（新しい方はインポートで入っています）。</p><ul id="removeList"></ul></div>
+</section>
+
+<script type="module" src="/web/merge-ui.js"></script>
+</html>

@@ -1,0 +1,47 @@
+# Tests, a firmware build and a check for leaked keys, tokens, home paths and email addresses.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Leak check (generic patterns)
+        run: tools/check-leaks.sh
+      - name: Vault store against a simulated flash with power cuts
+        working-directory: test/host
+        run: |
+          cc -std=c11 -O2 -g -Wall -Wextra -fsanitize=address,undefined -I../../firmware/main \
+            ../../firmware/main/logstore.c test_logstore.c -o t
+          ASAN_OPTIONS=detect_leaks=0 ./t
+      - name: Backup tool
+        run: python3 -I test/host/test_tw_backup.py
+      - name: Browser crypto and merge
+        run: |
+          node test/web/test_twcrypto.mjs
+          node test/web/test_merge.mjs
+
+  firmware:
+    runs-on: ubuntu-24.04
+    container: espressif/idf:v5.5.6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        shell: bash
+        working-directory: firmware
+        run: |
+          . "$IDF_PATH/export.sh"
+          idf.py set-target esp32s3
+          idf.py build
+          grep -q '^# CONFIG_TW_DEV_DOWNLOAD_ENDPOINT is not set' sdkconfig
+          grep -q '^# CONFIG_TW_DEV_SKIP_BUTTON is not set' sdkconfig

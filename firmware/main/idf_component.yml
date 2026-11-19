@@ -1,0 +1,5 @@
+dependencies:
+  idf: ">=5.2"
+  # tinyusb_net_* API (NCM). 2.x changed the API, so stay on 1.x for now.
+  espressif/esp_tinyusb: "~1.7.0"
+  espressif/led_strip: "^3.0.0"
