@@ -14,9 +14,9 @@ The board's status page is in Japanese. Labels are quoted here as they appear on
 | Windows 11 | Browser extension (Chrome, Edge) | Works | Install the certificate from the command line (double-click did not work) |
 | iPhone 17 (USB-C, iOS 26.5.1) | Bitwarden iOS app | Works | After installing the certificate, turn it on in Certificate Trust Settings |
 | moto g24 (Android 14) | Bitwarden Android app | Works | Turn off Wi-Fi and mobile data while talking to the board |
+| Chromebook | Browser extension (Chrome) | Works (2026-11-24) | If the certificate download is blocked, keep it. Import at `chrome://certificate-manager`. The Android app was not tried |
 | Redmi 2201117TL (Android 13) | — | Does not work | The board does not show up as a network |
 | Windows 10 | — | Not tried | No built-in driver, expected not to work |
-| Chromebook | — | Not tried | Reports welcome |
 | Firefox | — | Not yet | Not on the allow list (future work) |
 
 On every device the board is `192.168.237.1` and the connected side gets `192.168.237.2`. The board hands out no router or DNS, so the device's internet connection keeps working.
@@ -60,6 +60,14 @@ Check: `curl https://192.168.237.1/alive` answers without a warning.
 5. In the extension, set the server URL to `https://192.168.237.1` and log in (BOOT button).
 
 Check: run `ipconfig` in Command Prompt. If `192.168.237.2` is listed, you are connected.
+
+## Chromebook
+
+1. Plug in the board. If `http://192.168.237.1/progress` opens in Chrome, you are connected (Settings may not show the address; that is fine).
+2. Open `http://192.168.237.1/tinywarden.crt` in Chrome to download it. **If Chrome blocks it as insecure, press `Ctrl + J` and choose "Keep" in the download list** (only the certificate is served over plain HTTP, since it is not trusted yet).
+3. Type `chrome://certificate-manager` in the address bar, then Local certificates > Custom > Import, and choose `tinywarden.crt` (some versions have no menu entry for it in Settings; on older versions use the "Authorities" tab of `chrome://settings/certificates`).
+4. Close every Chrome window, open it again, and check that `https://192.168.237.1/` opens without a warning.
+5. In the extension, set the server URL to `https://192.168.237.1` and log in (BOOT button).
 
 ## iPhone
 

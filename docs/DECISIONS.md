@@ -323,6 +323,17 @@ SPECに書いた決まりの理由、経緯、測った結果、調べた結果�
 - [Changes to Trusted Certificate Authorities in Android Nougat - Android Developers Blog](https://android-developers.googleblog.com/2016/07/changes-to-trusted-certificate.html)
 - [Android kernel configs - Google Git](https://android.googlesource.com/kernel/configs/+/refs/heads/master-kernel-build-2022)
 
+### Chromebook
+
+**2026-11-24、Chromebook（ChromeのBitwarden拡張機能）で、ログインまでできた。ファームウェアは直していない。** 挿すだけでネットワークとして使え、`/progress` が開いた（設定の画面には `192.168.237.2` が見当たらなかったが、通信はできた）。つまずいたところは2つ:
+
+1. 証明書のダウンロードを、Chromeが「安全でない」（HTTPのため）として止めた。ダウンロードの一覧（`Ctrl + J`）から保存すれば取れる
+2. 設定のメニューに証明書の管理が見つからなかった。`chrome://certificate-manager` を直接開いて、「ローカル証明書」→「カスタム」でインポートできた
+
+まだ: ChromebookでのAndroid版アプリ（ChromeOSで入れた証明書を、アプリ側が信頼するか）。ChromeOSの版は記録していない。
+
+案: 証明書を `https://` からも取れるようにすれば、1のつまずきは無くなる（最初の1回だけ警告の画面を進めてもらう）。今はしていない。
+
 ## 家庭内LANのサーバーにする案
 
 - この基板はWi-Fiを使えない（技適が無い）。技適のある基板（Espressif純正のESP32-S3-WROOMなど）か、有線LAN（W5500など）にすれば、技術的にはできる

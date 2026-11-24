@@ -44,6 +44,7 @@ USBで挿したESP32-S3の基板の中で動く、小さな非公式のBitwarden
 | Windows 11 | ブラウザ拡張機能（Chrome、Edge） | USBのドライバは自動で入ります。証明書は `certutil -addstore -user Root` で信頼させます（ファイルをダブルクリックして入れる方法ではだめでした） |
 | iPhone 17（USB-C） | BitwardenのiOSアプリ | 設定 > 一般 > 情報 > 証明書信頼設定 で、証明書をオンにします |
 | moto g24（Android 14） | BitwardenのAndroidアプリ | 基板とやり取りするあいだは、Wi-Fiとモバイルデータを切ります。Androidは、アプリの通信をメインのネットワークにしか流さないためです |
+| Chromebook | ブラウザ拡張機能（Chrome） | 証明書のダウンロードがHTTPのため止められることがあります。ダウンロードの一覧（Ctrl+J）から保存します。読み込みは `chrome://certificate-manager` で行います |
 | Redmi 2201117TL（Android 13） | — | 動きませんでした。USBのネットワークが立ち上がりませんでした |
 
 Windows 10には、CDC-NCMのドライバが標準で入っていないため、試していません。Firefoxにはまだ対応していません。

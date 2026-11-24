@@ -44,6 +44,7 @@ Security and ease of use together: one vault, on hardware you hold, that every d
 | Windows 11 | Browser extension (Chrome, Edge) | The USB driver binds automatically. Trust the certificate with `certutil -addstore -user Root` (double-click install did not work) |
 | iPhone 17 (USB-C) | Bitwarden iOS app | Turn the certificate on under Settings > General > About > Certificate Trust Settings |
 | moto g24 (Android 14) | Bitwarden Android app | Turn Wi-Fi and mobile data off while talking to the board: Android sends app traffic only to its main network |
+| Chromebook | Browser extension (Chrome) | Chrome may block the certificate download (it comes over plain HTTP): keep it from the download list (Ctrl+J). Import it at `chrome://certificate-manager` |
 | Redmi 2201117TL (Android 13) | — | Did not work: the phone never brought the USB network up |
 
 Windows 10 has no inbox CDC-NCM driver and is untested. Firefox is not supported yet.
