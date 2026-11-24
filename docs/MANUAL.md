@@ -1,5 +1,7 @@
 # tinywarden の使い方
 
+English: [MANUAL.en.md](MANUAL.en.md)
+
 USBに挿したESP32-S3を、Bitwardenのサーバーにする（ブラウザの拡張機能、iPhone・Androidのアプリ）。**機器ごとの導入は [SETUP.md](SETUP.md)。** 仕組みは `docs/SPEC.md`、検討の経緯は `docs/DECISIONS.md`。
 
 ## はじめに知っておくこと

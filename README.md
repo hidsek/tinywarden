@@ -48,7 +48,7 @@ Security and ease of use together: one vault, on hardware you hold, that every d
 
 Windows 10 has no inbox CDC-NCM driver and is untested. Firefox is not supported yet.
 
-Setup steps for each device: [docs/SETUP.md](docs/SETUP.md) (Japanese).
+Setup steps for each device: [docs/SETUP.en.md](docs/SETUP.en.md). Everyday use and backups: [docs/MANUAL.en.md](docs/MANUAL.en.md).
 
 ## Passkeys
 
@@ -96,7 +96,7 @@ Flashing logs every client out: access tokens are signed with a key made fresh a
 ## First use
 
 1. Plug the board in.
-2. Trust its certificate on that device: `http://192.168.237.1/tinywarden.crt` (details per device in [docs/SETUP.md](docs/SETUP.md)).
+2. Trust its certificate on that device: `http://192.168.237.1/tinywarden.crt` (details per device in [docs/SETUP.en.md](docs/SETUP.en.md)).
 3. In the extension or app, choose self-hosted and set the server URL to `https://192.168.237.1`.
 4. Create the account on one device, pressing BOOT while the board's LED is lit. Log in on the others (BOOT again).
 5. On the status page, switch the KDF to Argon2id ("鍵を作る計算を変える"): the official apps always create accounts with PBKDF2, and the board cannot change that without your password. This logs every client out, so log in on your other devices afterwards.
@@ -153,15 +153,15 @@ Before committing, run `tools/install-hooks.sh` once: a pre-commit hook then che
 
 Development builds (`CONFIG_TW_DEV_DOWNLOAD_ENDPOINT`, `CONFIG_TW_DEV_SKIP_BUTTON` in `firmware/sdkconfig`) skip the button and add test endpoints. Never use one on a board that holds a real vault.
 
-## Documents (Japanese)
+## Documents
 
 | Document | Contents |
 |---|---|
-| [docs/SPEC.md](docs/SPEC.md) | The specification: network, certificates, storage, API, status page |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | Why things are the way they are, measurements, what was tried, comparison with Bitwarden and Vaultwarden |
-| [docs/MANUAL.md](docs/MANUAL.md) | How to use it, backups |
-| [docs/SETUP.md](docs/SETUP.md) | Setup per device |
-| [docs/TESTING.md](docs/TESTING.md) | Tests and results |
+| [docs/MANUAL.en.md](docs/MANUAL.en.md) | How to use it, backups, merging vaults, Argon2id, lifespan |
+| [docs/SETUP.en.md](docs/SETUP.en.md) | Setup per device |
+| [docs/SPEC.md](docs/SPEC.md) | The specification: network, certificates, storage, API, status page (Japanese) |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | Why things are the way they are, measurements, what was tried, comparison with Bitwarden and Vaultwarden (Japanese) |
+| [docs/TESTING.md](docs/TESTING.md) | Tests and results (Japanese) |
 | [release/PUBLISH.md](release/PUBLISH.md) | Version numbers and how a version is published (English) |
 
 ## Never automate
