@@ -33,6 +33,8 @@ cat > "$WORK/manifest.json" <<JSON
 }
 JSON
 touch "$WORK/.nojekyll"
+# Google Search Console ownership file (public by design: it holds only the token)
+cp "$REL"/site/google*.html "$WORK/" 2>/dev/null || true
 
 # Scan the page too
 cat "$WORK/index.html" "$WORK/manifest.json" | (cd "$REPO" && tools/check-leaks.sh --stdin) || exit 1
