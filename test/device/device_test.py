@@ -56,7 +56,8 @@ def req(method, url, body=None, headers=None, timeout=60):
         data = body
     r = urllib.request.Request(url, data=data, method=method, headers=h)
     try:
-        with urllib.request.urlopen(r, context=CTX if url.startswith("https") else None, timeout=timeout) as resp:
+        # One opener for both schemes, so a redirect from HTTP to HTTPS also uses the board's CA
+        with urllib.request.build_opener(urllib.request.HTTPSHandler(context=CTX)).open(r, timeout=timeout) as resp:
             return resp.status, resp.read()
     except urllib.error.HTTPError as e:
         return e.code, e.read()
