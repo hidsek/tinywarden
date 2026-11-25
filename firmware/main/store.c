@@ -52,6 +52,60 @@ static uint8_t s_enc_key[32], s_id_key[32];
 static uint32_t s_count[K_N];   // live sealed records per inner kind, counted at unlock
 static uint32_t s_unreadable;   // sealed records the current key cannot open (left over from an old account)
 
+// Inner kind of each live sealed record, by its opaque id (RAM, filled at unlock). Lets a pass over one
+// kind skip the others without opening them: sync walks folders, then items.
+typedef struct {
+    uint8_t opq[16];
+    uint8_t kind;
+} kind_ent_t;
+static kind_ent_t *s_kinds;
+static uint32_t s_nkinds, s_capkinds;
+
+static kind_ent_t *kinds_find(const uint8_t opq[16])
+{
+    for (uint32_t i = 0; i < s_nkinds; i++) {
+        if (memcmp(s_kinds[i].opq, opq, 16) == 0) return &s_kinds[i];
+    }
+    return NULL;
+}
+
+static uint8_t kinds_get(const uint8_t opq[16])
+{
+    kind_ent_t *e = kinds_find(opq);
+    return e ? e->kind : 0;  // 0: not known, open it to see
+}
+
+static void kinds_set(const uint8_t opq[16], uint8_t kind)
+{
+    kind_ent_t *e = kinds_find(opq);
+    if (e) {
+        e->kind = kind;
+        return;
+    }
+    if (s_nkinds == s_capkinds) {
+        uint32_t nc = s_capkinds ? s_capkinds * 2 : 256;
+        void *p = realloc(s_kinds, nc * sizeof(kind_ent_t));
+        if (!p) return;  // only a shortcut: without it the record is opened to find its kind
+        s_kinds = p;
+        s_capkinds = nc;
+    }
+    memcpy(s_kinds[s_nkinds].opq, opq, 16);
+    s_kinds[s_nkinds++].kind = kind;
+}
+
+static void kinds_del(const uint8_t opq[16])
+{
+    kind_ent_t *e = kinds_find(opq);
+    if (e) *e = s_kinds[--s_nkinds];
+}
+
+static void kinds_clear(void)
+{
+    free(s_kinds);
+    s_kinds = NULL;
+    s_nkinds = s_capkinds = 0;
+}
+
 // ---------- flash adapter ----------
 
 static int fl_read(void *ctx, uint32_t off, void *buf, uint32_t len)
@@ -233,6 +287,7 @@ static int scan_one(uint8_t kind, const uint8_t id[16], const char *data, uint32
     opened_t o;
     if (unseal(id, data, len, &o)) {
         if (o.kind < K_N) s->count[o.kind]++;
+        kinds_set(id, o.kind);
         free(o.buf);
     } else {
         s->bad++;
@@ -252,6 +307,7 @@ esp_err_t tw_store_unlock(const uint8_t key[32])
     }
     memcpy(s_enc_key, enc, 32);
     memcpy(s_id_key, idk, 32);
+    kinds_clear();
     scan_t sc = {0};
     int64_t t0 = esp_timer_get_time();
     int r = ls_foreach(s_ls, LS_KIND_SEALED, scan_one, &sc);
@@ -274,6 +330,7 @@ static void lock_now(void)
     memset(s_id_key, 0, sizeof(s_id_key));
     memset(s_count, 0, sizeof(s_count));
     s_unreadable = 0;
+    kinds_clear();
 }
 
 bool tw_store_unlocked(void)
@@ -434,6 +491,7 @@ esp_err_t tw_store_write(const char *path, const cJSON *obj)
             bool existed = ls_exists(s_ls, LS_KIND_SEALED, opq);
             r = ls_put(s_ls, LS_KIND_SEALED, opq, sealed, sl);
             if (r == LS_OK && !existed) s_count[kind]++;
+            if (r == LS_OK) kinds_set(opq, kind);
             free(sealed);
         }
     }
@@ -462,6 +520,7 @@ esp_err_t tw_store_remove(const char *path)
         opaque_id(kind, id, opq);
         r = ls_del(s_ls, LS_KIND_SEALED, opq);
         if (r == LS_OK && s_count[kind]) s_count[kind]--;
+        if (r == LS_OK) kinds_del(opq);
     }
     UNLOCK();
     return to_esp(r);
@@ -479,6 +538,8 @@ static int visit(uint8_t kind, const uint8_t opq[16], const char *data, uint32_t
 {
     (void)kind;
     visit_t *v = arg;
+    uint8_t known = kinds_get(opq);
+    if (known && known != v->kind) return LS_OK;  // another kind: no need to open it
     opened_t o;
     if (!unseal(opq, data, len, &o)) return LS_OK;  // left over from an old account
     if (o.kind == v->kind) {
@@ -527,6 +588,8 @@ static int collect(uint8_t kind, const uint8_t opq[16], const char *data, uint32
 {
     (void)kind;
     idlist_t *l = arg;
+    uint8_t known = kinds_get(opq);
+    if (known && known != l->kind) return LS_OK;
     opened_t o;
     if (!unseal(opq, data, len, &o)) return LS_OK;
     bool match = o.kind == l->kind;
@@ -557,6 +620,7 @@ esp_err_t tw_store_delete_all(const char *dir)
     for (int i = 0; r == LS_OK && i < l.n; i++) {
         r = ls_del(s_ls, LS_KIND_SEALED, l.ids[i]);
         if (r == LS_OK && s_count[kind]) s_count[kind]--;
+        if (r == LS_OK) kinds_del(l.ids[i]);
     }
     UNLOCK();
     free(l.ids);

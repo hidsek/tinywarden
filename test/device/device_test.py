@@ -313,9 +313,11 @@ def main():
     # 5. GC stress: fill the store with self-test records and delete them, three times
     if not args.quick:
         for r in range(3):
-            text = selftest_round(900)
-            line = next((l for l in text.splitlines() if "done in" in l or "FAILED" in l), text[-120:])
-            check(f"GC stress round {r + 1}: 900 records written", "done in" in text, line.strip())
+            # 500 sealed records of ~2.1 KB (padded) fill most of what 799 items leave free, so GC runs
+            text = selftest_round(500)
+            line = next((l for l in text.splitlines() if "FAILED" in l), None) or \
+                next((l for l in text.splitlines() if "done in" in l), text[-120:])
+            check(f"GC stress round {r + 1}: 500 records written", "done in" in text and "FAILED" not in text, line.strip())
             code, body = req("POST", BASE + "/s/dev/selftest-clean", timeout=600)
             check(f"GC stress round {r + 1}: cleaned", code == 200, body.decode().strip())
         code, s4, _ = sync(tok)
