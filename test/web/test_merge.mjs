@@ -58,6 +58,14 @@ await check("compare: differing fields are named, folder compared by name", asyn
   eq([moved.kind, moved.diffs], ["differ", ["folder"]]);
 });
 
+await check("compare: which account and key an item was encrypted for is not a difference", async () => {
+  const x = login("x", "Site", "u", "p", "https://s.example", "2024-08-23T02:45:00Z");
+  const y = login("y", "Site", "u", "p", "https://s.example", "2026-11-19T17:48:00Z",
+    { encryptedFor: "1e0f310a-5b33-471a-ba3d-7a2e5d493c0b", encryptedByKeyId: "ac7b80541a0d5cd99cd94784cfe00989" });
+  const [p] = m.compare({ items: [x], folders: [] }, { items: [y], folders: [] });
+  eq([p.kind, p.diffs], ["same", []]);
+});
+
 await check("compare: empty written differently, passkey counter and password date are not differences", async () => {
   const x = login("x", "Site", "u", "p", "https://s.example", "2026-01-01T00:00:00Z",
     { favorite: false, reprompt: 0, fields: [], card: {} });

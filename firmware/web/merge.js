@@ -27,9 +27,11 @@ export function matchKey(item) {
   return JSON.stringify(parts);
 }
 
-// Fields that say nothing about the content
+// Fields that say nothing about the content. encryptedFor / encryptedByKeyId: which account and key the
+// newer clients encrypted the item for. An import re-encrypts under the new account, so they differ from the
+// export file even when nothing else does.
 const META = new Set(["id", "organizationId", "folderId", "collectionIds", "revisionDate", "creationDate", "deletedDate",
-  "archivedDate", "passwordHistory"]);
+  "archivedDate", "passwordHistory", "encryptedFor", "encryptedByKeyId"]);
 
 // Inside an item: values that change without the content changing
 const NOISE = new Set(["counter", "passwordRevisionDate", "uriChecksum"]);
