@@ -1764,8 +1764,7 @@ static esp_err_t status_locked(httpd_req_t *req)
         "</style><table>");
     chunkf(req, "<tr><th>チップ</th><td>ESP32-S3</td></tr><tr><th>版</th><td>%s</td></tr>", app->version);
     chunkf(req, "<tr><th>起動してから</th><td>%u 時間 %u 分</td></tr>", (unsigned)(up / 3600), (unsigned)(up / 60 % 60));
-    chunkf(req, "<tr><th>空きメモリ</th><td>%u KB</td></tr>", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_DEFAULT) / 1024));
-    chunkf(req, "<tr><th>証明書 SHA-256</th><td><code>%s</code></td></tr></table>", s_cert_fp);
+    chunkf(req, "<tr><th>空きメモリ</th><td>%u KB</td></tr></table>", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_DEFAULT) / 1024));
     if (tw_user_exists()) {
         httpd_resp_sendstr_chunk(req,
             "<p><label>ユーザー名 <input id=uu type=email autocomplete=username size=24></label><br>"
@@ -1866,7 +1865,8 @@ static esp_err_t h_status(httpd_req_t *req)
            (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024),
            (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
            (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM) / 1024));
-    chunkf(req, "<tr><th>証明書 SHA-256</th><td><code>%s</code></td></tr></table>", s_cert_fp);
+    chunkf(req, "<tr><th>証明書 SHA-256</th><td><code>%s</code><br><a href=/ca.crt>証明書をダウンロード</a></td></tr></table>",
+           s_cert_fp);
 
     httpd_resp_sendstr_chunk(req, "<h2>直近の通信</h2><table><tr><th>起動後（秒）</th><th>内容</th></tr>");
     for (int i = 0; i < REQ_LOG_N; i++) {
@@ -2065,12 +2065,14 @@ static esp_err_t h_dev_download(httpd_req_t *req)
 }
 #endif
 
-// ---------- HTTP (port 80): certificate download and import progress ----------
+// ---------- Certificate download (HTTPS, only with the status page unlocked) ----------
+// Not on port 80: the session cookie is Secure, and a certificate anyone can fetch says what the board is.
 
 static const char *s_cert_pem;
 
 static esp_err_t h_cert(httpd_req_t *req)
 {
+    REQUIRE_SESSION(req);
     httpd_resp_set_type(req, "application/x-x509-ca-cert");
     httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"ca.crt\"");
     return httpd_resp_sendstr(req, s_cert_pem);
@@ -2152,6 +2154,7 @@ esp_err_t tw_api_start(void)
         {"/web/*", HTTP_GET, tw_web_file, NULL},
         {"/merge", HTTP_GET, tw_web_file, NULL},
         {"/manual", HTTP_GET, tw_web_manual, NULL},
+        {"/ca.crt", HTTP_GET, h_cert, NULL},
         {"/s/wipe", HTTP_POST, h_wipe, NULL},
         {"/s/unlock", HTTP_POST, h_unlock, NULL},
         {"/s/lock", HTTP_POST, h_lock, NULL},
@@ -2198,16 +2201,14 @@ esp_err_t tw_api_start(void)
     hconf.server_port = 80;
     hconf.ctrl_port = ESP_HTTPD_DEF_CTRL_PORT;  // 32768; HTTPS already uses 32769 (its default)
     hconf.uri_match_fn = httpd_uri_match_wildcard;
-    hconf.max_open_sockets = 3;  // only serves one certificate download
+    hconf.max_open_sockets = 3;  // only import progress and the redirect to HTTPS
     hconf.lru_purge_enable = true;
     httpd_handle_t http = NULL;
     s_http_err = httpd_start(&http, &hconf);
     if (s_http_err != ESP_OK) {
         ESP_LOGE(TAG, "http start failed: %s", esp_err_to_name(s_http_err));
     } else {
-        const httpd_uri_t cert_route = {"/ca.crt", HTTP_GET, h_cert, NULL};
         const httpd_uri_t other = {"/*", HTTP_GET, h_http_other, NULL};
-        httpd_register_uri_handler(http, &cert_route);
         const httpd_uri_t progress_route = {"/progress", HTTP_GET, h_progress, NULL};
         httpd_register_uri_handler(http, &progress_route);
         httpd_register_uri_handler(http, &other);

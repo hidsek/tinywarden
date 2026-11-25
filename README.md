@@ -103,7 +103,7 @@ Flashing logs every client out: access tokens are signed with a key made fresh a
 ## First use
 
 1. Plug the board in.
-2. Trust its certificate on that device: `http://192.168.237.1/ca.crt` (details per device in [docs/SETUP.en.md](docs/SETUP.en.md)).
+2. Trust its certificate on that device: open `https://192.168.237.1/`, unlock it, and download the certificate there (details per device in [docs/SETUP.en.md](docs/SETUP.en.md)).
 3. In the extension or app, choose self-hosted and set the server URL to `https://192.168.237.1`.
 4. Create the account on one device, pressing BOOT while the board's LED is lit. Log in on the others (BOOT again). **Pick the username at random** (one `@` is enough; it need not be a real address) and write it down with the master password: the board does not store it, which makes a stolen board much harder to crack, and also means nobody can tell you what it was.
 5. On the status page, switch the KDF to Argon2id ("鍵を作る計算を変える"): the official apps always create accounts with PBKDF2, and the board cannot change that without your password. This logs every client out, so log in on your other devices afterwards.

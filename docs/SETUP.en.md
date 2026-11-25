@@ -24,7 +24,7 @@ On every device the board is `192.168.237.1` and the connected side gets `192.16
 ## Common to all devices
 
 1. **Create the account on one device first.** On the others, just log in with the same username (email) and master password. The board does not store the username, so pick it at random and write it down ([MANUAL.en.md](MANUAL.en.md), "Choosing a username").
-2. **Trust the certificate once on each device.** The certificate is made on the board and served at `http://192.168.237.1/ca.crt`. Its name is `Local CA 192.168.237.1`. To be safe, compare it with "証明書 SHA-256" (certificate SHA-256) on the status page (`https://192.168.237.1/`; shown even while locked). Remove the certificate of v0.2 and earlier (`tinywarden CA 192.168.237.1`) if it is installed.
+2. **Trust the certificate once on each device.** The certificate is made on the board and can be downloaded only from the unlocked status page. Open `https://192.168.237.1/` in a browser (it warns, since the certificate is not trusted yet; go on through "Advanced"), unlock it, and press "証明書をダウンロード" (download the certificate). Unlock with the setup code shown when flashing before the account exists, and with the vault's username and master password after. Its name is `Local CA 192.168.237.1`. Remove the certificate of v0.2 and earlier (`tinywarden CA 192.168.237.1`) if it is installed.
 3. **The server URL is `https://192.168.237.1`.** In the extension or app, choose "Self-hosted" on the login screen and enter it.
 4. **Press the BOOT button when creating the account and when logging in.** Press it while the board's LED (GPIO48) is lit (within 30 seconds). The LED's color differs between boards.
 5. **After creating the account, switch the key derivation to Argon2id on the status page.** Unlock the status page with the username and master password you created (before the account exists, with the setup code shown when flashing). The apps always create accounts with PBKDF2, so do this once, right after creating it (steps in [MANUAL.en.md](MANUAL.en.md), "Switching the key derivation"). It logs everyone out, so log in on your other devices after that.
@@ -36,10 +36,9 @@ If the certificate is ever regenerated (rare: when a firmware update changes its
 ## Mac
 
 1. Plug in the board. "Espressif Device" appears in System Settings > Network and gets `192.168.237.2`.
-2. Trust the certificate (macOS asks for your password):
+2. Download `ca.crt` as in step 2 of "On every device" above, then trust it (macOS asks for your password):
    ```sh
-   curl -o ca.crt http://192.168.237.1/ca.crt
-   security add-trusted-cert -r trustRoot -p ssl -k ~/Library/Keychains/login.keychain-db ca.crt
+   security add-trusted-cert -r trustRoot -p ssl -k ~/Library/Keychains/login.keychain-db ~/Downloads/ca.crt
    ```
 3. Quit the browser and open it again.
 4. In the extension, set the server URL to `https://192.168.237.1`, then create an account or log in (BOOT button).
@@ -50,7 +49,7 @@ Check: `curl https://192.168.237.1/alive` answers without a warning.
 
 1. Plug in the board. The driver is installed automatically, and "UsbNcm Host Device" appears under "Network adapters" in Device Manager.
    - If it appears under "Other devices" with a "!": right-click > Update driver > Browse my computer for drivers > Let me pick from a list of available drivers > Network adapters > manufacturer "Microsoft" > "UsbNcm Host Device".
-2. Open `http://192.168.237.1/ca.crt` in the browser to download it.
+2. Download `ca.crt` as in step 2 of "On every device" above.
 3. Install the certificate from Command Prompt (no administrator rights needed; answer "Yes" when asked):
    ```
    certutil -addstore -user Root %USERPROFILE%\Downloads\ca.crt
@@ -64,7 +63,7 @@ Check: run `ipconfig` in Command Prompt. If `192.168.237.2` is listed, you are c
 ## Chromebook
 
 1. Plug in the board. If `http://192.168.237.1/progress` opens in Chrome, you are connected (Settings may not show the address; that is fine).
-2. Open `http://192.168.237.1/ca.crt` in Chrome to download it. **If Chrome blocks it as insecure, press `Ctrl + J` and choose "Keep" in the download list** (only the certificate is served over plain HTTP, since it is not trusted yet).
+2. Download `ca.crt` as in step 2 of "On every device" above. **If Chrome blocks it as insecure, press `Ctrl + J` and choose "Keep" in the download list** (it comes from a page whose certificate is not trusted yet).
 3. Type `chrome://certificate-manager` in the address bar, then Local certificates > Custom > Import, and choose `ca.crt` (some versions have no menu entry for it in Settings; on older versions use the "Authorities" tab of `chrome://settings/certificates`).
 4. Close every Chrome window, open it again, and check that `https://192.168.237.1/` opens without a warning.
 5. In the extension, set the server URL to `https://192.168.237.1` and log in (BOOT button).
@@ -73,7 +72,7 @@ Check: run `ipconfig` in Command Prompt. If `192.168.237.2` is listed, you are c
 
 A USB-C iPhone, connected with one cable.
 
-1. Send `ca.crt` (downloaded on the Mac) to the iPhone with AirDrop. Without a Mac, plug in the board and open `http://192.168.237.1/ca.crt` in Safari.
+1. Send `ca.crt` (downloaded on the Mac) to the iPhone with AirDrop. Without a Mac, plug in the board and download it in Safari as in step 2 of "On every device" above.
 2. Open "Profile Downloaded" near the top of Settings and install it (named `Local CA 192.168.237.1`).
 3. **In Settings > General > About > Certificate Trust Settings, turn on `Local CA 192.168.237.1`.** Without this you get "The certificate for this server is invalid".
 4. Plug the board into the iPhone. "Ethernet" appears in Settings. The internet keeps working over mobile data or Wi-Fi.
@@ -89,7 +88,7 @@ Check: `https://192.168.237.1/` opens in Safari without a warning.
 1. Plug the board into the phone.
 2. **Turn on airplane mode and turn off Wi-Fi too** (see "Note for Android" below).
 3. Open `http://192.168.237.1/progress` in Chrome. If some English text appears, you are connected. If it says to turn on the internet, this model cannot be used.
-4. Open `http://192.168.237.1/ca.crt` in Chrome to download the certificate.
+4. In Chrome, download the certificate as in step 2 of "On every device" above.
 5. Install it in Settings > Security & privacy > More security settings > Encryption & credentials > Install a certificate > CA certificate (menu names differ a little between models).
 6. In the Bitwarden Android app, choose "Self-hosted" and enter `https://192.168.237.1` as the server URL.
 7. Log in (BOOT button).

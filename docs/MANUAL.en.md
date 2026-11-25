@@ -52,7 +52,7 @@ Steps for each device (Mac, Windows, iPhone, Android) and the list of tested dev
 
 ## Status page
 
-Open `https://192.168.237.1/` in a browser. **It is always locked.** While locked it shows only device information (chip, version, uptime, memory, certificate SHA-256), so someone who merely plugs it in cannot tell what it is.
+Open `https://192.168.237.1/` in a browser. **It is always locked.** While locked it shows only device information (chip, version, uptime, memory), so someone who merely plugs it in cannot tell what it is.
 
 - **Unlocking:** enter the username and master password, press "解除" (unlock), and press BOOT while the board's LED is lit. The master password is hashed in the page, so it never reaches the board. **Wrong passwords count as failed logins; 10 in a row erase everything.**
 - Before the account exists, enter the **setup code** instead (the one shown when flashing; dashes and case do not matter).

@@ -176,6 +176,11 @@ def main():
         return finish()
     check("locked status page shows no name and no vault information",
           "tinywarden" not in page.lower() and "保管庫" not in page and "BOOT" not in page and "/web/unlock.js" in page)
+    check("locked status page shows no certificate", "証明書" not in page and "SHA-256" not in page)
+    code, body = req("GET", BASE + "/ca.crt")
+    check("the certificate is hidden while locked", code == 404 and b"BEGIN CERTIFICATE" not in body, f"HTTP {code}")
+    _, body = req("GET", HTTP + "/ca.crt", timeout=10)
+    check("no certificate over plain HTTP", b"BEGIN CERTIFICATE" not in body)
     for path in ("/merge", "/web/status.js", "/web/twcrypto.js", "/web/merge-ui.js"):
         code, _ = req("GET", BASE + path)
         check(f"{path} is hidden while locked", code == 404, f"HTTP {code}")
@@ -232,6 +237,9 @@ def main():
         check("the setup code stops working once the account exists",
               unlock_status({"setupCode": args.setup_code}) == 400)
     check("status page unlocks with the vault's password", unlock_status() == 200)
+    code, body = req("GET", BASE + "/ca.crt", headers=SESSION)
+    check("the certificate downloads with the session", code == 200 and body.startswith(b"-----BEGIN CERTIFICATE"),
+          f"HTTP {code}")
     code, page = status_page()
     if not check("development build with button skip", "BOOTボタンの確認を省略中" in page,
                  "flash a build with CONFIG_TW_DEV_SKIP_BUTTON=y"):
