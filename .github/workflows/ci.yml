@@ -26,6 +26,8 @@ jobs:
           ASAN_OPTIONS=detect_leaks=0 ./t
       - name: Backup tool
         run: python3 -I test/host/test_tw_backup.py
+      - name: One-time setup code image
+        run: python3 -I test/host/test_setup_code.py
       - name: Browser crypto and merge
         run: |
           node test/web/test_twcrypto.mjs

@@ -31,7 +31,7 @@ import urllib.request
 
 BASE = "https://192.168.237.1"
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_CA = os.path.join(HERE, "..", "certs", "tinywarden.crt")
+DEFAULT_CA = os.path.join(HERE, "..", "certs", "ca.crt")
 DEVICE_ID = "7f3c1e2a-0b8d-4c6e-9a51-00000000b0c0"
 
 # ---------------------------------------------------------------- AES-256-CBC decryption
@@ -246,7 +246,7 @@ def http(method, path, cafile, body=None, headers=None, timeout=60):
 
 
 def cmd_fetch(a):
-    email = input("Email: ").strip()
+    email = input("Username (email): ").strip()
     password = getpass.getpass("Master password: ")
     code, body = http("POST", "/identity/accounts/prelogin", a.cafile, {"email": email})
     if code != 200:
@@ -270,8 +270,15 @@ def cmd_fetch(a):
     if code != 200:
         sys.exit(f"sync failed: HTTP {code}")
     sync = json.loads(body)
-    out = {"tinywarden_backup": 1, "saved": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-           "email": email, "prelogin": pre, "sync": sync}
+    # Format 2: no username in the file (like the board's own backups); decrypt asks for it
+    prof = sync.get("profile") or {}
+    if "email" in prof:
+        prof["email"] = None
+    mpu = (sync.get("userDecryption") or {}).get("masterPasswordUnlock") or {}
+    if "salt" in mpu:
+        mpu["salt"] = None
+    out = {"tinywarden_backup": 2, "saved": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+           "prelogin": pre, "sync": sync}
     with open(a.out, "w") as f:
         json.dump(out, f)
     n = len(sync.get("ciphers", []))
@@ -301,7 +308,7 @@ def user_keys(sync, mk):
     try:
         return split64(dec(enc, stretch(mk)))
     except MacError:
-        sys.exit("wrong master password (or wrong email)")
+        sys.exit("wrong master password (or wrong username)")
 
 
 def dec_tree(o, keys):
@@ -329,11 +336,13 @@ def strip(o):
 def cmd_decrypt(a):
     with open(a.backup) as f:
         b = json.load(f)
-    if b.get("tinywarden_backup") != 1:
+    if b.get("tinywarden_backup") not in (1, 2):
         sys.exit("not a tw_backup file")
     sync = lower_first(b["sync"])
+    # Format 1 carries the email; format 2 (firmware 0.3 and later) does not
+    email = b.get("email") or input("Username (email): ").strip()
     password = getpass.getpass("Master password: ")
-    keys = user_keys(sync, master_key(password, b["email"], b["prelogin"]))
+    keys = user_keys(sync, master_key(password, email, b["prelogin"]))
     folders = [{"id": f["id"], "name": dec(f["name"], keys).decode()} for f in sync.get("folders", [])]
     items, skipped = [], 0
     for c in sync.get("ciphers", []):
@@ -371,7 +380,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     f = sub.add_parser("fetch", help="log in to the board and save the encrypted vault")
     f.add_argument("out")
-    f.add_argument("--cafile", default=DEFAULT_CA, help="tinywarden CA certificate (default: certs/tinywarden.crt)")
+    f.add_argument("--cafile", default=DEFAULT_CA, help="the board's CA certificate (default: certs/ca.crt)")
     d = sub.add_parser("decrypt", help="decrypt a saved backup into Bitwarden's JSON export (offline)")
     d.add_argument("backup")
     d.add_argument("out")

@@ -13,16 +13,25 @@ The board's status page is in Japanese. Labels are quoted here as they appear on
 - **If the board breaks or is lost, the vault is gone with it.** Keep a backup somewhere else (see "Backups").
 - **An extension or app update may one day stop you from logging in.** Official apps update automatically and may not work until tinywarden catches up. So that you can still get your data out, **save a backup once a month with "控えを保存" (save a backup) on the status page.** `tools/tw_backup.py decrypt` turns it back into a Bitwarden export without any app (Example 1b below).
 - Whoever gets the board can read the encrypted data on it. Without the master password they cannot read the contents, but they can try passwords offline. **Use a long master password** (4–5 random words, or 16+ random characters).
+- **The username (email address) is not stored on the board.** A thief has to guess the username and the master password together. So the username gets stronger if you **pick it at random** instead of using your usual email (see "Choosing a username"). In return, **if you forget the username, you cannot open the vault either.** Write it on paper together with the master password.
+
+### Choosing a username
+
+- One `@` is enough. It does not have to be a real email address (no confirmation email is sent).
+- Use **one or two random words** (for example in the form `kumo-hashi@home`, with words picked by dice). One word makes guessing about 7,776 times more work.
+- A name (`tanaka@home`) or something very short (`a@z`) is tried first, so it adds almost nothing.
+- With several boards, `…@home` and `…@work` let you switch between them with the extension's account switcher.
 
 ## First setup
 
 Steps for each device (Mac, Windows, iPhone, Android) and the list of tested devices are in **[SETUP.en.md](SETUP.en.md)**. The flow is the same everywhere:
 
+0. Flashing the firmware shows a **setup code** (like `ABCD-EFGH-JKLM`). Until the account exists, it opens the status page. Note it down.
 1. Plug in the board (your device gets `192.168.237.2`; your internet keeps working).
-2. On that device, trust the certificate `tinywarden CA 192.168.237.1`, once.
+2. On that device, trust the certificate `Local CA 192.168.237.1`, once.
 3. In the extension or app, choose "Self-hosted" and enter `https://192.168.237.1` as the server URL.
-4. Create the account on the first device. **Press the BOOT button while the board's LED (GPIO48) is lit (within 30 seconds).** On the other devices, just log in (BOOT again).
-5. **On the status page, switch the key derivation to Argon2id** (see "Switching the key derivation"). The apps always create accounts with PBKDF2, so do this once, right after creating it. It logs everyone out, so log in on your other devices after that.
+4. Create the account on the first device (for the username, see "Choosing a username"). **Press the BOOT button while the board's LED (GPIO48) is lit (within 30 seconds).** On the other devices, just log in (BOOT again). Once the account exists, the setup code stops working.
+5. **On the status page, switch the key derivation to Argon2id** (see "Switching the key derivation"). Open the status page with the username and master password you just created. The apps always create accounts with PBKDF2, so do this once, right after creating it. It logs everyone out, so log in on your other devices after that.
 6. Set the vault timeout action to **"Lock"** (with "Log out" you need the board and the button every time).
 
 ## Everyday use
@@ -37,22 +46,29 @@ Steps for each device (Mac, Windows, iPhone, Android) and the list of tested dev
   - If you think someone saw your PIN, change the PIN on that device. Other devices and the master password can stay as they are.
 
 - Day to day, the extension alone is enough. Unlocking happens inside the extension, so no button press.
-- The button is needed only for: creating the account, logging in with the password (a new browser, after re-plugging), and saving a backup or erasing everything from the status page.
+- The button is needed only for: creating the account, logging in with the password (a new browser, after re-plugging), unlocking the status page, and saving a backup, changing the key derivation or erasing everything from the status page.
 - The board's LED (GPIO48) lights up when it is waiting for the button. Its color differs between boards (on some SuperMini boards it looks red). While it is lit, the board does not answer anything else.
 - A blue "BAT" LED that keeps blinking is the charging circuit looking for a battery, not a fault. Firmware cannot turn it off; cover it with tape or put the board in a case if it bothers you.
 
 ## Status page
 
-Open `https://192.168.237.1/` in a browser. No login (it shows only things that are harmless if seen by others).
+Open `https://192.168.237.1/` in a browser. **It is always locked.** While locked it shows only device information (chip, version, uptime, memory, certificate SHA-256), so someone who merely plugs it in cannot tell what it is.
+
+- **Unlocking:** enter the username and master password, press "解除" (unlock), and press BOOT while the board's LED is lit. The master password is hashed in the page, so it never reaches the board. **Wrong passwords count as failed logins; 10 in a row erase everything.**
+- Before the account exists, enter the **setup code** instead (the one shown when flashing; dashes and case do not matter).
+- The page locks itself after 30 minutes; "鍵を掛ける" (lock) locks it at once. Re-plugging the board also locks it.
+- Once unlocked, **this manual** can be read on the board itself (`https://192.168.237.1/manual`).
 
 | Row | What it tells you |
 |---|---|
-| 項目・フォルダ (items, folders) | Counts |
-| 保存領域・あと入る件数 (storage, room left) | Free space. About 1,300 items fit, at 2.2 KB per item on average |
+| 項目・フォルダ (items, folders) | Counts (counted when the vault is unlocked) |
+| 保存領域・あと入る件数 (storage, room left) | Free space. About 1,000 items fit, at 2.6 KB per item on average |
 | 古い版 (old versions) | Old versions left by edits and deletions. The board cleans them up before it fills |
 | 起動時の読み込み (load at start) | Red text means power was cut while writing (the half-written item was discarded) |
 | 直近の通信 (recent requests) | When something fails, shows where it stopped |
-| 最近の変更 (recent changes) | When something was saved or deleted (contents are encrypted, so item names are not shown) |
+| 最近の変更 (recent changes) | When something was saved or deleted (contents are encrypted, so item names are not shown; deleted ones show no type) |
+
+Everything on the board except the username, which is not stored at all, is kept encrypted, including the type, count and dates of items. The key is in the board's memory only after someone logs in, and is gone when it is unplugged.
 
 ## Import
 
@@ -76,8 +92,8 @@ Attachments are not imported in any format.
 
 Compare two vaults, then merge them into one or export only what one side is missing. Open it from "保管庫をまとめる" (merge vaults) on the status page. Everything is computed in the browser; the contents are sent neither to the board nor to the internet (closing the page discards them).
 
-- **Input:** for A and for B, first choose "ファイル" (file) or "この基板" (this board). For a file, only the field the file needs appears: the file password, or that account's master password (a tinywarden backup contains the email used to make the master key, so it is not asked). For this board, the email and master password. A and B can be different accounts.
-- **What you can load (one each for A and B):** a password-protected export (made in Vaultwarden or Bitwarden with "Password protected"), a tinywarden backup, an unencrypted export, or the board's current contents (email, master password, BOOT). Bitwarden and Vaultwarden "Account restricted" exports cannot be opened, because their key is on the server (export again and choose "Password protected"). The password is the file password you set when exporting, for a password-protected export, or the master password, for a tinywarden backup (the page tells you which).
+- **Input:** for A and for B, first choose "ファイル" (file) or "この基板" (this board). For a file, only the field the file needs appears: the file password, or that account's username and master password (backups made before v0.3 contain the username, so it is not asked). For this board, the username and master password. A and B can be different accounts.
+- **What you can load (one each for A and B):** a password-protected export (made in Vaultwarden or Bitwarden with "Password protected"), a tinywarden backup, an unencrypted export, or the board's current contents (username, master password, BOOT). Bitwarden and Vaultwarden "Account restricted" exports cannot be opened, because their key is on the server (export again and choose "Password protected"). The password is the file password you set when exporting, for a password-protected export, or the master password, for a tinywarden backup (the page tells you which).
 - **Matching:** the same ID means the same item. Items whose ID changed on import are matched by type, name, username and the host of the URL. Different ways of writing "empty" (empty string vs missing field), passkey use counts and password revision dates do not count as differences.
 - **Screen:** A's cards on the left, B's on the right, differing fields highlighted. At the top: "差分なし" (no differences), or the counts of differing, A-only and B-only items, plus how many items the saved file will have. Click the card to keep (green frame). In the middle: "両方" (keep both) and "捨てる" (drop). At first, for differing items the newer one is chosen, and items on one side only are kept. Passwords and the like are hidden; "隠した値を見せる" (show hidden values) reveals them.
 - **Saving:** "全部まとめる" (merge everything) and "足りない分だけ" (only what is missing; into A or into B, each with counts of additions and of items to delete by hand) are side by side. Choose one, then set a file password and the key derivation, and save.
@@ -98,7 +114,7 @@ Switch the computation that turns the master password into the vault key (KDF) f
 - **Why you do it yourself:** the official apps always create accounts with PBKDF2 (600,000 iterations). The board does not know your master password, so it cannot change this on its own. With Vaultwarden or Bitwarden cloud, too, you change it yourself in the web vault settings.
 - **Steps:**
   1. Save a backup with "控えを保存" (save a backup).
-  2. Under "鍵を作る計算を変える" (change key derivation) on the status page, enter your email and master password, leave "Argon2id（メモリ32MB、6回、並列4）" (memory 32 MB, 6 iterations, parallelism 4) selected, and press "変える" (change).
+  2. Under "鍵を作る計算を変える" (change key derivation) on the status page, enter your username and master password, leave "Argon2id（メモリ32MB、6回、並列4）" (memory 32 MB, 6 iterations, parallelism 4) selected, and press "変える" (change).
   3. When the board's LED lights up, press BOOT. Within 2 minutes after that, the page computes the newly wrapped key and sends it (Argon2id takes a few seconds on a computer).
   4. Done when it says "変えました" (changed) and the "鍵を作る計算（KDF）" row shows Argon2id.
 - **Afterwards:** every device is logged out. Log in again in the extension and phone apps (BOOT). The vault contents are unchanged (only the vault key is re-wrapped).
@@ -108,9 +124,12 @@ Switch the computation that turns the master password into the vault key (KDF) f
 
 ## Erasing everything
 
-At the bottom of the status page, type "消去" (erase), press "全部消す" (erase everything), and press BOOT while the board's LED is lit. The account and all items are erased. The certificate stays, so the Mac settings can stay as they are.
+Unlock the status page, type "消去" (erase) at the bottom, press "全部消す" (erase everything), and press BOOT while the board's LED is lit. The account and all items are erased. The certificate stays, so the Mac settings can stay as they are.
 
-Ten wrong master passwords in a row also erase everything in the same way.
+Ten wrong master passwords in a row (at login or on the status page) also erase everything in the same way.
+
+- Afterwards you can create a new account from the extension or app. The setup code, however, was erased when the first account was created. To open the status page (and the manual) before creating the new account, flash the firmware again to get a new setup code (the web flasher writes a new code even without "Erase device").
+- If you forgot the username or master password and cannot open the status page, flash again with "Erase device" ticked (this erases everything).
 
 ## Backups
 
@@ -129,7 +148,7 @@ Keep an encrypted copy somewhere else, so that a broken or lost board does not c
 
 A way to get your data out even if an extension or app update one day stops you from logging in.
 
-**From the status page** (easiest; works on a Mac or an iPhone): under "控えを保存" (save a backup), enter your email and master password, press the button, and press BOOT while the board's LED is lit. The master password is hashed in the page before it is sent, so it never reaches the board. Wrong passwords count the same as failed logins; 10 in a row erase everything. A file `tinywarden-backup-<date>.json` is saved. Its contents stay encrypted.
+**From the status page** (easiest; works on a Mac or an iPhone): under "控えを保存" (save a backup), enter your username and master password, press the button, and press BOOT while the board's LED is lit. The master password is hashed in the page before it is sent, so it never reaches the board. Wrong passwords count the same as failed logins; 10 in a row erase everything. A file `backup-<date>.json` is saved. Its contents stay encrypted. **The backup does not contain the username**, so enter it when opening the file (`decrypt`, the merge page).
 
 **From a terminal on a Mac:**
 
@@ -140,7 +159,7 @@ python3 -I tools/tw_backup.py fetch backup.json            # log in (press BOOT)
 python3 -I tools/tw_backup.py decrypt backup.json out.json # unlock with the master password into a password-protected Bitwarden export (no board needed)
 ```
 
-- A file saved from the status page can be restored with `decrypt` as is.
+- A file saved from the status page can be restored with `decrypt` as is. It asks for the username (backups made before v0.3 contain it and do not ask).
 - A file saved by `fetch` stays encrypted, so treat it like a password-protected JSON. When saving, it also checks that your master password opens it.
 - `decrypt` asks for a new file password (12+ characters) and writes `out.json` in the same form as Bitwarden's "password protected" export. No unencrypted file is left on disk. Enter that password when importing.
 - `--plain` writes unencrypted JSON. Use it only for a destination that cannot read password-protected files, and delete it right after importing.
@@ -164,6 +183,20 @@ If the first board breaks, plug in the second and log in, and you have the vault
 - A backup from the status page or `tw_backup.py` (Example 1b): first run `python3 -I tools/tw_backup.py decrypt backup.json out.json` to make a password-protected export, then import `out.json` (you are asked for the file password).
 - There is no feature to write a board's encrypted data straight onto another board. Importing into a new account works with any destination and is more reliable.
 
+## Moving from v0.2 to v0.3
+
+v0.3 changed how the vault is stored (the username is not stored, everything is encrypted). **A v0.2 vault cannot be opened by v0.3.** Nothing is migrated on the board; move it like this:
+
+1. **Still on v0.2**, export from the extension as **password-protected JSON** (Settings > Vault options > Export, the "File password" type). To be safe, also save a backup with "控えを保存" on the status page.
+2. On the web flasher, **tick "Erase device"** and flash v0.3. Note the **setup code**.
+3. The certificate is new too (now named `Local CA 192.168.237.1`). On each device, remove the old `tinywarden CA 192.168.237.1` and install the new one ([SETUP.en.md](SETUP.en.md)).
+4. Create the account with a new, randomly chosen username and your master password (BOOT).
+5. Open the status page with the new username and master password, and switch the key derivation to Argon2id.
+6. Log in again in the extension and import the file from step 1 (file password).
+7. Log in again on your other devices with the new username. Check on the status page that the counts match.
+
+If you flash v0.3 over a v0.2 vault without erasing, login is refused with "Old format" (it does not count as a failure, so nothing is erased).
+
 ## Keeping it for a long time (lifespan and weak points)
 
 Stored with care, the board can be expected to last around ten years (all figures are general rules of thumb, not measured on this board). But not decades without any attention.
@@ -185,7 +218,7 @@ Because the vault is a physical thing you hold, you can pass it on to your famil
 - Keep it somewhere cool and dry, with an anti-static bag and a desiccant.
 - About once a year, plug it in and check that it opens. Take a fresh backup at the same time ("控えを保存", or make an importable file with the merge page).
 - Have two boards, one as a spare. Keep the backup file and the paper with the master password somewhere other than the boards as well.
-- For whoever takes over, write the steps "plug in > trust the certificate > enter the server URL in the extension and log in (press BOOT)" on one sheet of paper and keep it together. If an app update has made it unusable, importing the backup into a new Bitwarden (or similar) account still gets the contents out ("Restoring").
+- For whoever takes over, write the steps "plug in > trust the certificate > enter the server URL in the extension and log in with the username and master password (press BOOT)" on one sheet of paper and keep it together. The board does not keep the username, so without it on paper the vault cannot be passed on. If an app update has made it unusable, importing the backup into a new Bitwarden (or similar) account still gets the contents out ("Restoring").
 
 ## Troubleshooting
 
@@ -194,7 +227,10 @@ Because the vault is a physical thing you hold, you can pass it on to your famil
 | Plugging in the board cuts the internet | Old firmware (a version that handed out a gateway). Unplugging fixes it. Flash new firmware |
 | Certificate error in the extension | Check that you trusted the certificate. Quit the browser and open it again |
 | iPhone says "The certificate for this server is invalid" | Check it is turned on in Certificate Trust Settings. If a firmware update regenerated the certificate, remove the old profile and install it again |
-| Cannot log in or create an account | Did you press BOOT while the board's LED was lit? Read the error under "直近の通信" (recent requests) on the status page |
+| Cannot log in or create an account | Did you press BOOT while the board's LED was lit? Is the username right (the board does not know it, so a wrong one looks like a wrong password)? Read the error under "直近の通信" (recent requests) on the status page |
+| "Old format" | You flashed v0.3 over a v0.2 vault. See "Moving from v0.2 to v0.3" |
+| Status page says "コードが違います" (wrong code) | Is it the setup code from this flash? Flashing again changes it. After the account exists it no longer works (use the username and master password) |
+| Forgot the username | The board cannot tell you. A device that is still logged in shows it in the extension's or app's account display. If none is, neither the board nor status-page backups can be opened. A password-protected export opens with its file password alone, so import that into a new account |
 | Suddenly logged out | The board was unplugged or restarted ("前回の再起動の理由", reason for last restart, on the status page). Log in again |
 | The board does not answer at all | Press the board's RST button once. If that does not help, unplug and plug it back in |
 | Import says "大きすぎる" (too large) | Split the export in two and import them one at a time |
@@ -203,7 +239,7 @@ Because the vault is a physical thing you hold, you can pass it on to your famil
 ## Flashing firmware (for developers)
 
 1. Enter download mode: hold BOOT, press and release RST, wait a second, release BOOT.
-2. `./flash.sh` (`./flash.sh --wipe` when the storage format changed; this erases the vault).
+2. `./flash.sh` (`./flash.sh --wipe` when the storage format changed; this erases the vault and prints a new setup code at the end).
 3. It starts on its own after flashing. You are logged out, so log in again.
 
 Builds with development features enabled in `firmware/sdkconfig` (`CONFIG_TW_DEV_DOWNLOAD_ENDPOINT`, `CONFIG_TW_DEV_SKIP_BUTTON`) must never be used for a real vault. `CONFIG_TW_DEV_SKIP_BUTTON` in particular skips the button check, so anyone can log in or erase everything.

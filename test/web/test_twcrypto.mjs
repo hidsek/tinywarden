@@ -155,5 +155,16 @@ for (const [label, prelogin] of [["PBKDF2", { kdf: 0, kdfIterations: 5000, kdfMe
   });
 }
 
+await check("format 2 backup (no username in the file) needs the username", async () => {
+  const b = await makeBackup("master pw", "Me@Example.com", { kdf: 0, kdfIterations: 5000, kdfMemory: null, kdfParallelism: null });
+  delete b.email;
+  b.tinywarden_backup = 2;
+  if (!tw.isTwBackup(b) || !tw.twBackupNeedsUsername(b)) throw new Error("not recognised as format 2");
+  await rejects(tw.openTwBackup(b, "master pw"), Error);
+  const { plain: p } = await tw.openTwBackup(b, "master pw", undefined, " me@example.com ");
+  eq(p.items.length, 2, "items");
+  await rejects(tw.openTwBackup(b, "master pw", undefined, "someone-else@example.com"), tw.MacError);
+});
+
 if (failed) { console.log(`${failed} failed`); process.exit(1); }
 console.log("all passed");

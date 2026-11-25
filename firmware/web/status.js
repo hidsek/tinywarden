@@ -5,10 +5,11 @@ const $ = (id) => document.getElementById(id);
 // The board answers in English (the same messages the apps get); show them in Japanese here
 const JA = {
   "Missing confirmation": "確認のヘッダーがありません（ページを読み直してください）",
-  "Email and master password are required": "メールとマスターパスワードが要ります",
+  "Username and master password are required": "ユーザー名（メール）とマスターパスワードが要ります",
   "Button not pressed within 30 seconds": "30秒以内にBOOTボタンが押されませんでした",
-  "Too many failed attempts. This tinywarden has been erased": "失敗が多すぎたので、tinywardenの中身を全部消しました",
-  "Email or master password is incorrect": "メールかマスターパスワードが違います（失敗の回数に数えました）",
+  "Too many failed attempts. The device has been erased": "失敗が多すぎたので、tinywardenの中身を全部消しました",
+  "Username or master password is incorrect": "ユーザー名かマスターパスワードが違います（失敗の回数に数えました）",
+  "Old format. Erase the device and set it up again": "0.3より前の形式の保管庫です。エクスポートしてから全部消して、作り直してください（マニュアルの「0.3への移し方」）",
   "No user": "アカウントがありません",
   "Start again: the confirmation expired (2 minutes) or was used": "最初からやり直してください（BOOTを押してから2分が過ぎたか、もう使った確認です）",
   "Invalid KDF settings, key or hash": "KDFの設定か、包み直した鍵の形が正しくありません",
@@ -16,11 +17,17 @@ const JA = {
 };
 const ja = (m) => JA[m] ?? m;
 
+// ---------------------------------------------------------------- 鍵を掛ける
+$("lb").onclick = async () => {
+  await fetch("/s/lock", { method: "POST" }).catch(() => {});
+  location.reload();
+};
+
 // ---------------------------------------------------------------- 控えを保存
 $("bb").onclick = async () => {
   const bb = $("bb"), bm = $("bm"), be = $("be"), bp = $("bp");
   const email = be.value.trim().toLowerCase(), pw = bp.value;
-  if (!email || !pw) { bm.textContent = "メールとマスターパスワードを入れてください。"; return; }
+  if (!email || !pw) { bm.textContent = "ユーザー名（メール）とマスターパスワードを入れてください。"; return; }
   bb.disabled = true;
   try {
     bm.textContent = "準備中…";
@@ -36,8 +43,8 @@ $("bb").onclick = async () => {
     const mph = await tw.masterPasswordHash(mk, pw);
     bp.value = "";
     bm.textContent = "基板のLEDが光っているあいだ（30秒以内）にBOOTボタンを押してください。";
-    const r = await fetch("/tw/backup", {
-      method: "POST", headers: { "X-tinywarden-Confirm": "backup", "Content-Type": "application/json" },
+    const r = await fetch("/s/backup", {
+      method: "POST", headers: { "X-Confirm": "backup", "Content-Type": "application/json" },
       body: JSON.stringify({ email, masterPasswordHash: mph }),
     });
     if (!r.ok) {
@@ -50,7 +57,7 @@ $("bb").onclick = async () => {
     const d = new Date(), p2 = (n) => String(n).padStart(2, "0");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `tinywarden-backup-${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}.json`;
+    a.download = `backup-${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -72,14 +79,14 @@ $("kb").onclick = async () => {
   const kb = $("kb"), km = $("km"), ke = $("ke"), kp = $("kp");
   const email = ke.value.trim().toLowerCase(), pw = kp.value;
   const target = TARGETS[$("kt").value];
-  if (!email || !pw) { km.textContent = "メールとマスターパスワードを入れてください。"; return; }
+  if (!email || !pw) { km.textContent = "ユーザー名（メール）とマスターパスワードを入れてください。"; return; }
   kb.disabled = true;
   try {
     km.textContent = "準備中…";
     const tw = await import("./twcrypto.js");
     const post = async (path, body) => {
       const r = await fetch(path, {
-        method: "POST", headers: { "X-tinywarden-Confirm": "kdf", "Content-Type": "application/json" }, body: JSON.stringify(body),
+        method: "POST", headers: { "X-Confirm": "kdf", "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(ja(j.message || j.ErrorModel?.Message || String(r.status)));
@@ -94,7 +101,7 @@ $("kb").onclick = async () => {
     const oldHash = await tw.masterPasswordHash(oldMk, pw);
 
     km.textContent = "基板のLEDが光っているあいだ（30秒以内）にBOOTボタンを押してください。";
-    const cur = await post("/tw/kdf/key", { email, masterPasswordHash: oldHash });
+    const cur = await post("/s/kdf/key", { email, masterPasswordHash: oldHash });
     if (cur.kdf === target.kdf && cur.kdfIterations === target.kdfIterations &&
         (target.kdf === 0 || (cur.kdfMemory === target.kdfMemory && cur.kdfParallelism === target.kdfParallelism))) {
       km.textContent = `もう${target.label}の同じ設定です。変えていません。`;
@@ -113,7 +120,7 @@ $("kb").onclick = async () => {
     const newHash = await tw.masterPasswordHash(newMk, pw);
     kp.value = "";
     km.textContent = "保存中…";
-    await post("/tw/kdf", {
+    await post("/s/kdf", {
       token: cur.token, masterPasswordHash: newHash, key: wrapped,
       kdf: target.kdf, kdfIterations: target.kdfIterations, kdfMemory: target.kdfMemory, kdfParallelism: target.kdfParallelism,
     });
@@ -135,7 +142,7 @@ $("kb").onclick = async () => {
     c.disabled = true;
     m.textContent = "基板のLEDが光っているあいだ（30秒以内）にBOOTボタンを押してください。押すと消去が始まります（30秒ほどかかります）。";
     try {
-      const r = await fetch("/tw/wipe", { method: "POST", headers: { "X-tinywarden-Confirm": "wipe-all" } });
+      const r = await fetch("/s/wipe", { method: "POST", headers: { "X-Confirm": "wipe-all" } });
       const j = await r.json().catch(() => ({}));
       m.textContent = r.ok ? "消しました。拡張機能はログアウトされます。アカウントを作り直してください。" : "消していません: " + ja(j.message || String(r.status));
       if (r.ok) setTimeout(() => location.reload(), 1500);

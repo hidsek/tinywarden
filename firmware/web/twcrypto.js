@@ -182,8 +182,15 @@ export async function makeProtectedExport(plain, password, cfg = ARGON2ID_DEFAUL
 
 // ------------------------------------------------------------------ tinywarden backup (status page / tw_backup.py fetch)
 
+// Format 1 carries the email; format 2 (firmware 0.3 and later) does not: the board does not store it,
+// so the username has to be typed in to open the file.
 export function isTwBackup(doc) {
-  return doc && doc.tinywarden_backup === 1 && doc.sync && doc.prelogin && typeof doc.email === "string";
+  return !!doc && doc.sync && doc.prelogin &&
+    ((doc.tinywarden_backup === 1 && typeof doc.email === "string") || doc.tinywarden_backup === 2);
+}
+
+export function twBackupNeedsUsername(doc) {
+  return isTwBackup(doc) && typeof doc.email !== "string";
 }
 
 function lowerFirst(o) {
@@ -215,11 +222,14 @@ async function decTree(o, keys) {
   return o;
 }
 
-// Decrypts a tinywarden backup into a plain export. Returns {plain, skipped}; MacError = wrong password or email.
-export async function openTwBackup(doc, password, onProgress) {
-  if (!isTwBackup(doc)) throw new Error("tinywardenの控えではありません");
+// Decrypts a tinywarden backup into a plain export. Returns {plain, skipped}; MacError = wrong password or
+// username. username is used when the file has none (format 2).
+export async function openTwBackup(doc, password, onProgress, username) {
+  if (!isTwBackup(doc)) throw new Error("控えのファイルではありません");
   const sync = lowerFirst(doc.sync);
-  const mk = await masterKey(password, doc.email, doc.prelogin, onProgress);
+  const user = typeof doc.email === "string" ? doc.email : username;
+  if (!user) throw new Error("ユーザー名（メール）を入れてください");
+  const mk = await masterKey(password, user, doc.prelogin, onProgress);
   const wrapped = sync.profile?.key ?? sync.userDecryption?.masterPasswordUnlock?.masterKeyEncryptedUserKey;
   if (!wrapped) throw new Error("控えに暗号化された保管庫の鍵がありません");
   const userKey = splitKey(await decBytes(wrapped, await stretch(mk)));

@@ -28,8 +28,9 @@ let deltaTo = "b";   // which side the delta file is for
 
 const JA = {
   "Button not pressed within 30 seconds": "30秒以内にBOOTボタンが押されませんでした",
-  "Email or master password is incorrect": "メールかマスターパスワードが違います（失敗の回数に数えました）",
-  "Too many failed attempts. This tinywarden has been erased": "失敗が多すぎたので、tinywardenの中身を全部消しました",
+  "Username or master password is incorrect": "ユーザー名かマスターパスワードが違います（失敗の回数に数えました）",
+  "Old format. Erase the device and set it up again": "0.3より前の形式の保管庫です。エクスポートしてから全部消して、作り直してください（マニュアルの「0.3への移し方」）",
+  "Too many failed attempts. The device has been erased": "失敗が多すぎたので、tinywardenの中身を全部消しました",
 };
 
 // ---------------------------------------------------------------- the two inputs
@@ -56,9 +57,11 @@ function buildSide(name) {
   const showKind = (text, ok = true) => { kind.replaceChildren(el("b", { text })); kind.className = ok ? "" : "ng"; };
   const pw = el("input", { type: "password", autocomplete: "off" });
   const pwLabel = el("span", { text: "パスワード" });
+  const uname = el("input", { type: "email", autocomplete: "username" });
+  const unameRow = el("p", { hidden: "" }, el("label", {}, "ユーザー名（メール。tinywardenにログインするときのもの）", el("br"), uname));
   const pwRow = el("p", { hidden: "" }, el("label", {}, pwLabel, el("br"), pw));
   const open = el("button", { text: "開く", hidden: "" });
-  const filePane = el("div", {}, el("p", {}, file), guide, kind, pwRow, el("p", {}, open));
+  const filePane = el("div", {}, el("p", {}, file), guide, kind, unameRow, pwRow, el("p", {}, open));
 
   // From this board
   const email = el("input", { type: "email", autocomplete: "username" });
@@ -66,7 +69,7 @@ function buildSide(name) {
   const board = el("button", { text: "この基板から取る" });
   const boardPane = el("div", { hidden: "" },
     el("p", { class: "mute", text: "tinywardenに今入っている中身を使います。BOOTボタンが要ります（控えの保存と同じ）。" }),
-    el("p", {}, el("label", {}, "メール", el("br"), email)),
+    el("p", {}, el("label", {}, "ユーザー名（メール）", el("br"), email)),
     el("p", {}, el("label", {}, "マスターパスワード", el("br"), mpw)), el("p", {}, board));
 
   const msg = el("p", { class: "mute" });
@@ -82,7 +85,7 @@ function buildSide(name) {
 
   file.onchange = async () => {
     doc = null;
-    pwRow.hidden = open.hidden = true;
+    pwRow.hidden = open.hidden = unameRow.hidden = true;
     clear();
     const f = file.files[0];
     if (!f) return;
@@ -97,9 +100,15 @@ function buildSide(name) {
       pwLabel.textContent = "ファイルのパスワード（エクスポートしたときに決めたもの。マスターパスワードではありません）";
       pwRow.hidden = open.hidden = false;
     } else if (tw.isTwBackup(doc)) {
-      // The master key is made from this account's email, so the email comes from the file
-      showKind(`tinywardenの控えです（${doc.email} のアカウント）。`);
-      pwLabel.textContent = `tinywardenのマスターパスワード（${doc.email} のアカウント。控えには別のパスワードはありません）`;
+      // The master key is made from the username: older backups carry it, newer ones (format 2) do not
+      if (tw.twBackupNeedsUsername(doc)) {
+        showKind("tinywardenの控えです。控えにはユーザー名が入っていないので、入れてください。");
+        pwLabel.textContent = "tinywardenのマスターパスワード（控えには別のパスワードはありません）";
+        unameRow.hidden = false;
+      } else {
+        showKind(`tinywardenの控えです（${doc.email} のアカウント）。`);
+        pwLabel.textContent = `tinywardenのマスターパスワード（${doc.email} のアカウント。控えには別のパスワードはありません）`;
+      }
       pwRow.hidden = open.hidden = false;
     } else if (doc?.encrypted === false && Array.isArray(doc.items)) {
       showKind("暗号化されていないエクスポートです。パスワードは要りません。");
@@ -122,7 +131,7 @@ function buildSide(name) {
       let plain, note = "";
       if (tw.isProtectedExport(doc)) plain = await tw.openProtectedExport(doc, pw.value, prog);
       else if (tw.isTwBackup(doc)) {
-        const r = await tw.openTwBackup(doc, pw.value, prog);
+        const r = await tw.openTwBackup(doc, pw.value, prog, uname.value.trim().toLowerCase());
         plain = r.plain;
         if (r.skipped) note = `（ゴミ箱と組織の ${r.skipped} 件は除いた）`;
       } else plain = doc;
@@ -130,7 +139,8 @@ function buildSide(name) {
       names[name] = file.files[0]?.name ?? "";
       opened(plain, note);
     } catch (e) {
-      say(e instanceof tw.MacError ? "パスワードが違います。" : "開けませんでした: " + (e.message || e), "ng");
+      say(e instanceof tw.MacError ? (tw.isTwBackup(doc) ? "ユーザー名かパスワードが違います。" : "パスワードが違います。")
+        : "開けませんでした: " + (e.message || e), "ng");
     } finally {
       open.disabled = false;
     }
@@ -139,7 +149,7 @@ function buildSide(name) {
   // Take the board's current vault directly (same steps as the status page's backup)
   board.onclick = async () => {
     const em = email.value.trim().toLowerCase(), p = mpw.value;
-    if (!em || !p) { say("メールとマスターパスワードを入れてください。", "ng"); return; }
+    if (!em || !p) { say("ユーザー名（メール）とマスターパスワードを入れてください。", "ng"); return; }
     board.disabled = true;
     try {
       const pre = await (await fetch("/identity/accounts/prelogin", {
@@ -148,8 +158,8 @@ function buildSide(name) {
       const mk = await tw.masterKey(p, em, pre, (x) => say(`マスターパスワードを計算中… ${Math.round(x * 100)}%`));
       const mph = await tw.masterPasswordHash(mk, p);
       say("基板のLEDが光っているあいだ（30秒以内）にBOOTボタンを押してください。");
-      const r = await fetch("/tw/backup", {
-        method: "POST", headers: { "X-tinywarden-Confirm": "backup", "Content-Type": "application/json" },
+      const r = await fetch("/s/backup", {
+        method: "POST", headers: { "X-Confirm": "backup", "Content-Type": "application/json" },
         body: JSON.stringify({ email: em, masterPasswordHash: mph }),
       });
       if (!r.ok) {
@@ -157,7 +167,7 @@ function buildSide(name) {
         throw new Error(JA[j.message] ?? j.message ?? String(r.status));
       }
       say("読み出し中…");
-      const res = await tw.openTwBackup(await r.json(), p, () => {});
+      const res = await tw.openTwBackup(await r.json(), p, () => {}, em);
       mpw.value = "";
       names[name] = "この基板";
       opened(res.plain, "");
@@ -387,7 +397,7 @@ async function save(mode) {
       const blob = new Blob([JSON.stringify(doc, null, 2)], { type: "application/json" });
       const d = new Date(), z = (n) => String(n).padStart(2, "0");
       const tag = mode === "all" ? "merged" : `for-${mode.toUpperCase()}`;
-      const a = el("a", { href: URL.createObjectURL(blob), download: `tinywarden-${tag}-${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}.json` });
+      const a = el("a", { href: URL.createObjectURL(blob), download: `export-${tag}-${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}.json` });
       document.body.append(a);
       a.click();
       a.remove();

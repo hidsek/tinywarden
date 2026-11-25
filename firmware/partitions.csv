@@ -3,4 +3,6 @@ nvs,      data, nvs,     0x9000,   0x6000
 phy_init, data, phy,     0xf000,   0x1000
 factory,  app,  factory, 0x10000,  0x100000
 # storage: raw log store (SPEC 5), no filesystem
-storage,  data, 0x40,    0x110000, 0x2F0000
+storage,  data, 0x40,    0x110000, 0x2E0000
+# setup: the one-time code the flasher writes (tools/setup_code.py), erased when the account is created
+setup,    data, 0x41,    0x3F0000, 0x1000

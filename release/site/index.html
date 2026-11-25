@@ -19,28 +19,53 @@ esp-web-install-button{display:block;margin:16px 0}
 <body>
 <h1>tinywarden を書き込む</h1>
 <p>ESP32-S3の基板に、tinywarden（USBで挿す、非公式のBitwarden互換サーバー）のファームウェア <b>v{{VERSION}}</b> を、ブラウザから書き込みます。</p>
-<p class="box warn"><b>非公式・実験的なものです。</b>Bitwarden, Inc. とは関係がなく、第三者の監査も受けていません。基板の中身は閉じていないので、基板を手にした人は暗号文を読み出せます。守りの中心はマスターパスワードの長さです。控えは必ず別の場所に持ってください。詳しくは <a href="https://github.com/hidsek/tinywarden">GitHub</a> のREADME。</p>
+<p class="box warn"><b>非公式・実験的なものです。</b>Bitwarden, Inc. とは関係がなく、第三者の監査も受けていません。基板の中身は閉じていないので、基板を手にした人は暗号文を読み出せます（ユーザー名は基板に保存しないので、相手はユーザー名とマスターパスワードを組で当てる必要があります）。守りの中心は、マスターパスワードの長さと、でたらめに選んだユーザー名です。控えは必ず別の場所に持ってください。詳しくは <a href="https://github.com/hidsek/tinywarden">GitHub</a> のREADME。</p>
 
 <h2>書き込む</h2>
 <ol>
 <li>パソコンの <b>Chrome か Edge</b> で、このページを開く（スマホやSafari、Firefoxは書き込みに使えません）</li>
 <li>基板をUSBで挿し、<b>書き込みモード</b>にする: BOOTを押したまま、RSTを押して離し、BOOTを離す</li>
 <li>下のボタンを押し、出てきた一覧から基板（「USB JTAG/serial debug unit」など）を選ぶ</li>
-<li><b>はじめて書き込むとき</b>は「Erase device（全部消す）」にチェックを入れる。<span class="warn"><b>すでに保管庫が入っている基板では、チェックを入れない</b>（入れると保管庫も証明書も消えます）</span></li>
+<li><b>はじめて書き込むとき</b>は「Erase device（全部消す）」にチェックを入れる。<span class="warn"><b>すでに保管庫が入っている基板では、チェックを入れない</b>（入れると保管庫も証明書も消えます）</span>。<b>v0.2から上げるときは例外</b>で、先にエクスポートしてからチェックを入れて書き込み、インポートし直します（v0.3はv0.2の保管庫を開けません。<a href="https://github.com/hidsek/tinywarden/blob/main/docs/MANUAL.md">MANUAL</a>の「v0.2からv0.3に移す」）</li>
 <li>終わったら、基板のRSTを押して起動する</li>
 </ol>
 
-<esp-web-install-button manifest="manifest.json">
+<div class="box"><b>初回コード: <code id="code">（作成中）</code></b><br>
+<span class="mute">このページを開くたびに新しく作り、ファームと一緒に書き込みます。アカウントを作るまで、基板の管理ページ（<code>https://192.168.237.1/</code>）をこのコードで開けます。<b>書き込む前に控えてください</b>（ページを開き直すと変わります）。アカウントを作ると、基板から消えます。基板に残るのはコードのハッシュだけです。</span></div>
+
+<esp-web-install-button id="install">
   <span slot="unsupported"><p class="warn">このブラウザは書き込みに使えません。パソコンのChromeかEdgeで開いてください。</p></span>
   <span slot="not-allowed"><p class="warn">このページはHTTPSで開く必要があります。</p></span>
 </esp-web-install-button>
 
-<p class="mute">書き込むファイル: <code>tinywarden-v{{VERSION}}-esp32s3.bin</code>（SHA-256 <code>{{SHA256}}</code>）。同じものがGitHubのReleasesにもあります。<code>esptool.py --chip esp32s3 write_flash 0x0 &lt;ファイル&gt;</code> でも書き込めます。</p>
+<p class="mute">書き込むファイル: <code>tinywarden-v{{VERSION}}-esp32s3.bin</code>（SHA-256 <code>{{SHA256}}</code>）。同じものがGitHubのReleasesにもあります。<code>esptool.py --chip esp32s3 write_flash 0x0 &lt;ファイル&gt;</code> でも書き込めます（そのときは初回コードは入りません。アカウントを作ってから、そのアカウントで管理ページを開きます。コードを入れるなら <code>tools/setup_code.py</code> と <code>write_flash 0x3F0000</code>）。</p>
 
 <h2>書き込んだあと</h2>
 <p>基板を挿すと、パソコンやスマホに新しい有線LANとして見えます（基板は <code>192.168.237.1</code>）。証明書を信頼させてから、Bitwardenの拡張機能かアプリで、サーバーのURLを <code>https://192.168.237.1</code> にします。機器ごとの手順は <a href="https://github.com/hidsek/tinywarden/blob/main/docs/SETUP.md">SETUP.md</a>。</p>
 
 <h2>English</h2>
-<p>Flash tinywarden v{{VERSION}} (an unofficial, experimental Bitwarden-compatible server on an ESP32-S3 over USB) from Chrome or Edge on a computer. Put the board in download mode (hold BOOT, press and release RST, release BOOT), press the button above and pick the board. Tick "Erase device" only on a first install: it wipes any vault and certificate. Press RST when done. Not affiliated with Bitwarden, Inc.; not audited. See the <a href="https://github.com/hidsek/tinywarden">README</a>.</p>
+<p>Flash tinywarden v{{VERSION}} (an unofficial, experimental Bitwarden-compatible server on an ESP32-S3 over USB) from Chrome or Edge on a computer. Put the board in download mode (hold BOOT, press and release RST, release BOOT), press the button above and pick the board. Tick "Erase device" only on a first install: it wipes any vault and certificate. Press RST when done. The page shows a one-time setup code and writes its hash to the board; until an account exists, it unlocks the board's status page, so note it before flashing. Coming from v0.2: export first, then flash with "Erase device" and import again (v0.3 cannot open a v0.2 vault). Not affiliated with Bitwarden, Inc.; not audited. See the <a href="https://github.com/hidsek/tinywarden">README</a>.</p>
+<script type="module">
+// One-time setup code (same as tools/setup_code.py): 12 characters, 60 bits. The board's "setup"
+// partition (0x3F0000) gets "SC" 1 0 | salt 16 | SHA-256(salt || code) | 0xFF up to 4 KB.
+const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const r = crypto.getRandomValues(new Uint8Array(12));
+const code = Array.from(r, (b) => A[b & 31]).join("");
+document.getElementById("code").textContent = code.match(/.{4}/g).join("-");
+const salt = crypto.getRandomValues(new Uint8Array(16));
+const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array([...salt, ...new TextEncoder().encode(code)])));
+const img = new Uint8Array(4096).fill(0xff);
+img.set([0x53, 0x43, 1, 0], 0); img.set(salt, 4); img.set(hash, 20);
+const setupUrl = URL.createObjectURL(new Blob([img], { type: "application/octet-stream" }));
+// The manifest is made here so it can carry the setup image; part paths must be absolute for a blob manifest
+const manifest = {
+  name: "tinywarden", version: "{{VERSION}}", new_install_prompt_erase: true,
+  builds: [{ chipFamily: "ESP32-S3", parts: [
+    { path: new URL("{{BIN}}", location.href).href, offset: 0 },
+    { path: setupUrl, offset: 0x3F0000 },
+  ] }],
+};
+document.getElementById("install").manifest = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: "application/json" }));
+</script>
 </body>
 </html>

@@ -85,6 +85,22 @@ with tempfile.TemporaryDirectory() as d:
     inner = json.loads(tb.dec(pdoc["data"], fkeys))
     check("protected export decrypts to the same plain export", inner == out)
     check("no plain text in the protected file", "銀行" not in open(ppath).read() and "p@ss" not in open(ppath).read())
+    # Format 2 (firmware 0.3): no username in the file; decrypt asks for it
+    b2 = os.path.join(d, "b2.json")
+    json.dump({"tinywarden_backup": 2, "prelogin": pre, "sync": sync}, open(b2, "w"))
+    import builtins
+    real_input = builtins.input
+    builtins.input = lambda prompt="": email
+    getpass.getpass = lambda prompt="": pw
+    o2 = os.path.join(d, "o2.json")
+    tb.cmd_decrypt(type("A", (), {"backup": b2, "out": o2, "plain": True}))
+    check("format 2 decrypts with the username typed in", json.load(open(o2)) == out)
+    builtins.input = lambda prompt="": "someone-else@example.com"
+    try:
+        tb.cmd_decrypt(type("A", (), {"backup": b2, "out": o2, "plain": True})); check("format 2: wrong username rejected", False)
+    except SystemExit as e:
+        check("format 2: wrong username rejected", "wrong" in str(e))
+    builtins.input = real_input
     getpass.getpass = lambda prompt="": "wrong"
     try:
         tb.cmd_decrypt(type("A", (), {"backup": bpath, "out": opath, "plain": True})); check("wrong password rejected", False)

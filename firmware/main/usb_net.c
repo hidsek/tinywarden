@@ -74,7 +74,7 @@ static const char *s_ecm_str[STR_COUNT] = {
     CONFIG_TINYUSB_DESC_MANUFACTURER_STRING,
     CONFIG_TINYUSB_DESC_PRODUCT_STRING,
     CONFIG_TINYUSB_DESC_SERIAL_STRING,
-    "tinywarden",
+    "USB Ethernet",
     s_ecm_mac,  // host-side MAC as 12 hex digits, filled in before the driver is installed
 };
 #endif
@@ -110,7 +110,7 @@ esp_err_t tw_usb_net_start(void)
 
     esp_netif_inherent_config_t base = ESP_NETIF_INHERENT_DEFAULT_WIFI_AP();
     base.if_key = "USB_NCM";
-    base.if_desc = "tinywarden";
+    base.if_desc = "usb";
     base.route_prio = 10;
     base.ip_info = &ip;
     // MAC on our side of the link must differ from the one given to the host

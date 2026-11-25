@@ -8,6 +8,7 @@
     extern const uint8_t _binary_##sym##_end[] asm("_binary_" #sym "_end");
 
 WEB_SYM(status_js)
+WEB_SYM(unlock_js)
 WEB_SYM(merge_html)
 WEB_SYM(merge_ui_js)
 WEB_SYM(merge_js)
@@ -19,31 +20,52 @@ WEB_SYM(_blake_js)
 WEB_SYM(_md_js)
 WEB_SYM(utils_js)
 WEB_SYM(LICENSE)
+WEB_SYM(manual_html_gz)
 
 typedef struct {
     const char *path;
     const uint8_t *start, *end;
     const char *type;
     bool page;  // an HTML page: no caching, and the same Content-Security-Policy as the status page
+    bool open;  // served before the status page is unlocked (the locked page's script and Argon2id only)
 } web_file_t;
 
 #define JS "text/javascript; charset=utf-8"
-#define F(p, sym, t) {p, _binary_##sym##_start, _binary_##sym##_end, t, false}
+#define F(p, sym, t) {p, _binary_##sym##_start, _binary_##sym##_end, t, false, false}
+#define OPEN(p, sym, t) {p, _binary_##sym##_start, _binary_##sym##_end, t, false, true}
 
 static const web_file_t FILES[] = {
-    {"/merge", _binary_merge_html_start, _binary_merge_html_end, "text/html; charset=utf-8", true},
+    {"/merge", _binary_merge_html_start, _binary_merge_html_end, "text/html; charset=utf-8", true, false},
+    OPEN("/web/unlock.js", unlock_js, JS),
     F("/web/status.js", status_js, JS),
     F("/web/merge-ui.js", merge_ui_js, JS),
     F("/web/merge.js", merge_js, JS),
     F("/web/twcrypto.js", twcrypto_js, JS),
-    F("/web/vendor/noble-hashes/argon2.js", argon2_js, JS),
-    F("/web/vendor/noble-hashes/_u64.js", _u64_js, JS),
-    F("/web/vendor/noble-hashes/blake2.js", blake2_js, JS),
-    F("/web/vendor/noble-hashes/_blake.js", _blake_js, JS),
-    F("/web/vendor/noble-hashes/_md.js", _md_js, JS),
-    F("/web/vendor/noble-hashes/utils.js", utils_js, JS),
-    F("/web/vendor/noble-hashes/LICENSE", LICENSE, "text/plain; charset=utf-8"),
+    OPEN("/web/vendor/noble-hashes/argon2.js", argon2_js, JS),
+    OPEN("/web/vendor/noble-hashes/_u64.js", _u64_js, JS),
+    OPEN("/web/vendor/noble-hashes/blake2.js", blake2_js, JS),
+    OPEN("/web/vendor/noble-hashes/_blake.js", _blake_js, JS),
+    OPEN("/web/vendor/noble-hashes/_md.js", _md_js, JS),
+    OPEN("/web/vendor/noble-hashes/utils.js", utils_js, JS),
+    OPEN("/web/vendor/noble-hashes/LICENSE", LICENSE, "text/plain; charset=utf-8"),
 };
+
+// GET /manual: docs/MANUAL and SETUP (Japanese and English), gzipped at build time (tools/md2html.py).
+// Only with the status page unlocked, like every page that says what the device is.
+esp_err_t tw_web_manual(httpd_req_t *req)
+{
+    if (!tw_status_session_ok(req)) {
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "not found");
+        return ESP_OK;
+    }
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "Content-Security-Policy", TW_PAGE_CSP);
+    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+    return httpd_resp_send(req, (const char *)_binary_manual_html_gz_start,
+                           _binary_manual_html_gz_end - _binary_manual_html_gz_start);
+}
 
 esp_err_t tw_web_file(httpd_req_t *req)
 {
@@ -51,6 +73,7 @@ esp_err_t tw_web_file(httpd_req_t *req)
     for (size_t i = 0; i < sizeof(FILES) / sizeof(FILES[0]); i++) {
         const web_file_t *f = &FILES[i];
         if (strlen(f->path) == n && memcmp(f->path, req->uri, n) == 0) {
+            if (!f->open && !tw_status_session_ok(req)) break;  // as if it did not exist
             httpd_resp_set_type(req, f->type);
             if (f->page) {
                 httpd_resp_set_hdr(req, "Cache-Control", "no-store");

@@ -19,7 +19,9 @@
 #define LS_RESERVE_SEGS 3u    // segments' worth of space never promised to live data (GC headroom)
 #define LS_RECENT_N   32
 
-enum { LS_KIND_USER = 1, LS_KIND_FOLDER = 2, LS_KIND_CIPHER = 3, LS_KIND_TEST = 4 };
+// The firmware uses only USER (the plaintext account header) and SEALED (every encrypted record, whatever
+// it holds; store.c). FOLDER, CIPHER and TEST remain for the host test and older layouts.
+enum { LS_KIND_USER = 1, LS_KIND_FOLDER = 2, LS_KIND_CIPHER = 3, LS_KIND_TEST = 4, LS_KIND_SEALED = 5, LS_KIND_N = 6 };
 enum { LS_OP_PUT = 1, LS_OP_DEL = 2 };
 
 enum {
@@ -63,7 +65,7 @@ typedef struct {
     uint32_t stale_bytes;   // old versions and dead tombstones, reclaimable by GC
     uint32_t free_bytes;    // capacity - live_bytes
     uint16_t segs_total, segs_free, segs_used;
-    uint32_t count[5];      // live keys per kind
+    uint32_t count[LS_KIND_N];  // live keys per kind
     uint32_t gc_runs;       // since mount
     uint32_t torn_records;  // detected at mount (power loss during a write)
     uint32_t mount_ms_hint; // unused by the store; for the caller

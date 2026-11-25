@@ -287,11 +287,55 @@ static bool path_is(httpd_req_t *req, const char *path)
     return strncmp(req->uri, path, n) == 0 && (req->uri[n] == '\0' || req->uri[n] == '?');
 }
 
+#define OLD_FORMAT_MSG "Old format. Erase the device and set it up again"
+
 #define REQUIRE_AUTH(req)                                              \
     do {                                                               \
         if (!tw_auth_check_bearer(req)) {                              \
             return send_error(req, "401 Unauthorized", "Unauthorized"); \
         }                                                              \
+    } while (0)
+
+// ---------- status page session (cookie "sid", RAM only) ----------
+// The status page and its tools need the vault's username and master password (POST /s/unlock, checked
+// like a login: button, failure counter). Before that, / shows only device information and nothing on
+// the device answers to the tools' URLs (404), so a stranger at the USB link cannot tell what it is.
+#define SESS_N 2
+#define SESS_MS (30 * 60 * 1000)
+static char s_sess[SESS_N][48];
+static int64_t s_sess_until[SESS_N];
+static int s_sess_next;
+
+bool tw_status_session_ok(httpd_req_t *req)
+{
+    char ck[256];
+    if (httpd_req_get_hdr_value_str(req, "Cookie", ck, sizeof(ck)) != ESP_OK) return false;
+    char *p = ck;
+    while ((p = strstr(p, "sid=")) && p != ck && p[-1] != ' ' && p[-1] != ';') p += 4;
+    if (!p) return false;
+    p += 4;
+    size_t n = strcspn(p, "; ");
+    int64_t now = esp_timer_get_time() / 1000;
+    for (int i = 0; i < SESS_N; i++) {
+        if (s_sess[i][0] && strlen(s_sess[i]) == n && tw_ct_equal((const uint8_t *)p, (const uint8_t *)s_sess[i], n) &&
+            now < s_sess_until[i]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void sessions_clear(void)
+{
+    memset(s_sess, 0, sizeof(s_sess));
+}
+
+#define REQUIRE_SESSION(req)                                   \
+    do {                                                       \
+        if (!tw_status_session_ok(req)) {                      \
+            httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "not found"); \
+            return ESP_OK;                                     \
+        }                                                      \
     } while (0)
 
 static void bump_revision(void)
@@ -329,14 +373,15 @@ static cJSON *account_keys_json(const cJSON *user)
     return ak;
 }
 
-static cJSON *profile_json(const cJSON *user)
+// email: the session's username (from its token), or NULL (backup: nothing that names the owner)
+static cJSON *profile_json(const cJSON *user, const char *email)
 {
     cJSON *p = cJSON_CreateObject();
     cJSON_AddNumberToObject(p, "_status", 0);
     cJSON_AddItemToObject(p, "accountKeys", account_keys_json(user));
     cJSON_AddItemToObject(p, "id", dup_or_null(user, "id"));
     cJSON_AddItemToObject(p, "name", dup_or_null(user, "name"));
-    cJSON_AddItemToObject(p, "email", dup_or_null(user, "email"));
+    cJSON_AddItemToObject(p, "email", email ? cJSON_CreateString(email) : cJSON_CreateNull());
     cJSON_AddBoolToObject(p, "emailVerified", true);
     cJSON_AddBoolToObject(p, "premium", true);
     cJSON_AddBoolToObject(p, "premiumFromOrganization", false);
@@ -357,16 +402,9 @@ static cJSON *profile_json(const cJSON *user)
     return p;
 }
 
-static const char *user_salt(const cJSON *user)
-{
-    const cJSON *s = cJSON_GetObjectItemCaseSensitive(user, "salt");
-    if (cJSON_IsString(s)) return s->valuestring;
-    const cJSON *e = cJSON_GetObjectItemCaseSensitive(user, "email");
-    return cJSON_IsString(e) ? e->valuestring : "";
-}
-
-// camel=true for sync ("kdfType"), false for connect/token ("KdfType") - the two differ upstream
-static cJSON *mp_unlock_json(const cJSON *user, bool camel)
+// camel=true for sync ("kdfType"), false for connect/token ("KdfType") - the two differ upstream.
+// The salt of the master key is the username, which only the session knows (NULL: null).
+static cJSON *mp_unlock_json(const cJSON *user, const char *email, bool camel)
 {
     cJSON *u = cJSON_CreateObject();
     cJSON *k = cJSON_AddObjectToObject(u, camel ? "kdf" : "Kdf");
@@ -376,7 +414,13 @@ static cJSON *mp_unlock_json(const cJSON *user, bool camel)
     cJSON_AddItemToObject(k, camel ? "parallelism" : "Parallelism", dup_or_null(user, "kdfParallelism"));
     cJSON_AddItemToObject(u, camel ? "masterKeyEncryptedUserKey" : "MasterKeyEncryptedUserKey", dup_or_null(user, "key"));
     cJSON_AddItemToObject(u, camel ? "masterKeyWrappedUserKey" : "MasterKeyWrappedUserKey", dup_or_null(user, "key"));
-    cJSON_AddStringToObject(u, camel ? "salt" : "Salt", user_salt(user));
+    if (email) {
+        char em[256];
+        tw_email_norm(email, em, sizeof(em));
+        cJSON_AddStringToObject(u, camel ? "salt" : "Salt", em);
+    } else {
+        cJSON_AddNullToObject(u, camel ? "salt" : "Salt");
+    }
     if (camel) {
         cJSON_AddItemToObject(u, "containedKeyId", dup_or_null(user, "userKeyId"));
     }
@@ -407,7 +451,7 @@ static esp_err_t h_alive(httpd_req_t *req)
              esp_err_to_name(s_http_err),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-    httpd_resp_set_hdr(req, "X-tinywarden-Diag", s_diag);
+    httpd_resp_set_hdr(req, "X-Diag", s_diag);
     char iso[32], out[40];
     tw_now_iso(iso);
     snprintf(out, sizeof(out), "\"%s\"", iso);
@@ -420,7 +464,7 @@ static esp_err_t h_config(httpd_req_t *req)
     cJSON_AddStringToObject(c, "version", "2026.6.0");
     cJSON_AddNullToObject(c, "gitHash");
     cJSON *srv = cJSON_AddObjectToObject(c, "server");
-    cJSON_AddStringToObject(srv, "name", "tinywarden");
+    cJSON_AddStringToObject(srv, "name", "local");
     cJSON_AddStringToObject(srv, "url", "https://github.com/");
     cJSON *set = cJSON_AddObjectToObject(c, "settings");
     cJSON_AddBoolToObject(set, "disableUserRegistration", tw_user_exists());
@@ -441,11 +485,10 @@ static esp_err_t h_config(httpd_req_t *req)
 
 static esp_err_t h_prelogin(httpd_req_t *req)
 {
+    // The same answer for any username: the board does not know which one is right (SPEC 6)
     cJSON *body = read_json(req);
-    cJSON *user = tw_user_load();
-    const cJSON *email = body ? cJSON_GetObjectItemCaseSensitive(body, "email") : NULL;
-    const cJSON *u_email = user ? cJSON_GetObjectItemCaseSensitive(user, "email") : NULL;
-    bool match = cJSON_IsString(email) && cJSON_IsString(u_email) && strcasecmp(email->valuestring, u_email->valuestring) == 0;
+    cJSON *user = tw_head_load();
+    bool match = user != NULL;
 
     cJSON *r = cJSON_CreateObject();
     cJSON *kdf = match ? dup_or_null(user, "kdf") : cJSON_CreateNumber(0);
@@ -477,7 +520,7 @@ static esp_err_t h_register_email(httpd_req_t *req)
         return send_error(req, "400 Bad Request", "Registration not allowed or user already exists");
     }
     const cJSON *name = cJSON_GetObjectItemCaseSensitive(body, "name");
-    const char *token = tw_auth_pending_register_token(email->valuestring, cJSON_IsString(name) ? name->valuestring : NULL);
+    const char *token = tw_auth_pending_register_token(cJSON_IsString(name) ? name->valuestring : NULL);
     cJSON_Delete(body);
 
     char accept[128] = "";
@@ -509,9 +552,9 @@ static esp_err_t h_register_finish(httpd_req_t *req)
         return send_json(req, "200 OK", r);
     }
     case ESP_ERR_INVALID_STATE:
-        return send_error(req, "400 Bad Request", "This tinywarden already has a user");
+        return send_error(req, "400 Bad Request", "This device already has a user");
     case ESP_ERR_TIMEOUT:
-        return send_error(req, "400 Bad Request", "Press the button on the tinywarden within 30 seconds");
+        return send_error(req, "400 Bad Request", "Press the button on the device within 30 seconds");
     default:
         return send_error(req, "400 Bad Request", "Registration failed");
     }
@@ -538,18 +581,18 @@ static void remember_device(const char *device_id)
         }
     }
     cJSON_AddItemToArray(devs, cJSON_CreateString(device_id));
-    tw_store_write(TW_USER_PATH, user);
+    tw_user_save(user);
     cJSON_Delete(user);
 }
 
-static esp_err_t token_response(httpd_req_t *req, const char *device_id, const char *device_type)
+static esp_err_t token_response(httpd_req_t *req, const char *email, const char *device_id, const char *device_type)
 {
     cJSON *user = tw_user_load();
     if (!user) {
         return send_error(req, "400 Bad Request", "No user");
     }
-    char *access = tw_auth_issue_access(user, device_id, device_type);
-    char *refresh = tw_auth_issue_refresh();
+    char *access = tw_auth_issue_access(user, email, device_id, device_type);
+    char *refresh = tw_auth_issue_refresh(email);
     cJSON *r = cJSON_CreateObject();
     cJSON_AddStringToObject(r, "access_token", access ? access : "");
     cJSON_AddNumberToObject(r, "expires_in", 7200);
@@ -568,7 +611,7 @@ static esp_err_t token_response(httpd_req_t *req, const char *device_id, const c
     cJSON_AddItemToObject(r, "AccountKeys", account_keys_json(user));
     cJSON *udo = cJSON_AddObjectToObject(r, "UserDecryptionOptions");
     cJSON_AddBoolToObject(udo, "HasMasterPassword", true);
-    cJSON_AddItemToObject(udo, "MasterPasswordUnlock", mp_unlock_json(user, false));
+    cJSON_AddItemToObject(udo, "MasterPasswordUnlock", mp_unlock_json(user, email, false));
     cJSON_AddStringToObject(udo, "Object", "userDecryptionOptions");
     free(access);
     free(refresh);
@@ -609,28 +652,31 @@ static esp_err_t h_token(httpd_req_t *req)
         }
         tw_form_get(body, "username", email, 256);
         tw_form_get(body, "password", hash, 512);
-        tw_login_result_t res = tw_auth_check_password(email, hash);
-        free(email);
+        tw_login_result_t res = tw_auth_check_password(hash);
         free(hash);
         switch (res) {
         case TW_LOGIN_OK:
             remember_device(device_id);
-            err = token_response(req, device_id, device_type);
+            err = token_response(req, email, device_id, device_type);
+            break;
+        case TW_LOGIN_OLD_FORMAT:
+            err = token_error(req, OLD_FORMAT_MSG);
             break;
         case TW_LOGIN_NO_BUTTON:
-            err = token_error(req, "Press the button on the tinywarden within 30 seconds");
+            err = token_error(req, "Press the button on the device within 30 seconds");
             break;
         case TW_LOGIN_WIPED:
-            err = token_error(req, "Too many failed attempts. This tinywarden has been erased");
+            err = token_error(req, "Too many failed attempts. The device has been erased");
             break;
         default:
             err = token_error(req, "Username or password is incorrect. Try again");
         }
+        free(email);
     } else if (strcmp(grant, "refresh_token") == 0) {
-        char tok[64] = "";
+        char tok[64] = "", email[256] = "";
         tw_form_get(body, "refresh_token", tok, sizeof(tok));
-        err = tw_auth_use_refresh(tok) ? token_response(req, device_id, device_type)
-                                       : token_error(req, "Invalid refresh token");
+        err = tw_auth_use_refresh(tok, email, sizeof(email)) ? token_response(req, email, device_id, device_type)
+                                                             : token_error(req, "Invalid refresh token");
     } else {
         err = token_error(req, "Unsupported grant type");
     }
@@ -640,17 +686,14 @@ static esp_err_t h_token(httpd_req_t *req)
 
 static esp_err_t h_known_device(httpd_req_t *req)
 {
-    char email_b64[256] = "", dev[64] = "";
-    httpd_req_get_hdr_value_str(req, "X-Request-Email", email_b64, sizeof(email_b64));
+    // By device id only (the username is not stored). The device list is sealed, so until someone logs in
+    // after a restart every device is "new", which only changes what the login screen offers.
+    char dev[64] = "";
     httpd_req_get_hdr_value_str(req, "X-Device-Identifier", dev, sizeof(dev));
-    char email[200] = "";
-    int n = tw_b64_decode(email_b64, (uint8_t *)email, sizeof(email) - 1);
-    if (n > 0) email[n] = '\0';
 
     bool known = false;
-    cJSON *user = tw_user_load();
-    const cJSON *u_email = user ? cJSON_GetObjectItemCaseSensitive(user, "email") : NULL;
-    if (cJSON_IsString(u_email) && strcasecmp(u_email->valuestring, email) == 0) {
+    cJSON *user = tw_store_unlocked() ? tw_user_load() : NULL;
+    if (user) {
         const cJSON *d;
         cJSON_ArrayForEach(d, cJSON_GetObjectItemCaseSensitive(user, "devices")) {
             if (cJSON_IsString(d) && strcmp(d->valuestring, dev) == 0) known = true;
@@ -665,11 +708,13 @@ static esp_err_t h_known_device(httpd_req_t *req)
 static esp_err_t h_profile(httpd_req_t *req)
 {
     REQUIRE_AUTH(req);
+    char email[256];
+    tw_auth_bearer_email(req, email, sizeof(email));
     cJSON *user = tw_user_load();
     if (!user) {
         return send_error(req, "400 Bad Request", "No user");
     }
-    cJSON *p = profile_json(user);
+    cJSON *p = profile_json(user, email);
     cJSON_Delete(user);
     return send_json(req, "200 OK", p);
 }
@@ -691,7 +736,7 @@ static esp_err_t h_user_key_id(httpd_req_t *req)
     const cJSON *kid = body ? cJSON_GetObjectItemCaseSensitive(body, "keyId") : NULL;
     if (user && cJSON_IsString(kid)) {
         cJSON_ReplaceItemInObjectCaseSensitive(user, "userKeyId", cJSON_CreateString(kid->valuestring));
-        tw_store_write(TW_USER_PATH, user);
+        tw_user_save(user);
     }
     cJSON_Delete(body);
     cJSON_Delete(user);
@@ -755,11 +800,11 @@ static esp_err_t send_chunk_json(httpd_req_t *req, cJSON *obj)
     return err;
 }
 
-// The sync object, streamed. Also the "sync" part of a backup (h_backup).
-static void stream_sync(httpd_req_t *req, cJSON *user)
+// The sync object, streamed. Also the "sync" part of a backup (h_backup, email NULL).
+static void stream_sync(httpd_req_t *req, cJSON *user, const char *email)
 {
     httpd_resp_sendstr_chunk(req, "{\"profile\":");
-    send_chunk_json(req, profile_json(user));
+    send_chunk_json(req, profile_json(user, email));
     httpd_resp_sendstr_chunk(req, ",\"folders\":[");
     stream_ctx_t ctx = {.req = req, .first = true, .buf = malloc(STREAM_BUF)};
     tw_store_foreach(TW_FOLDER_DIR, stream_file, &ctx);
@@ -771,7 +816,7 @@ static void stream_sync(httpd_req_t *req, cJSON *user)
     free(ctx.buf);
     httpd_resp_sendstr_chunk(req, "],\"domains\":null,\"sends\":[],\"userDecryption\":");
     cJSON *ud = cJSON_CreateObject();
-    cJSON_AddItemToObject(ud, "masterPasswordUnlock", mp_unlock_json(user, true));
+    cJSON_AddItemToObject(ud, "masterPasswordUnlock", mp_unlock_json(user, email, true));
     const cJSON *kid = cJSON_GetObjectItemCaseSensitive(user, "userKeyId");
     if (cJSON_IsString(kid)) {
         cJSON_AddStringToObject(ud, "userKeyId", kid->valuestring);
@@ -783,6 +828,8 @@ static void stream_sync(httpd_req_t *req, cJSON *user)
 static esp_err_t h_sync(httpd_req_t *req)
 {
     REQUIRE_AUTH(req);
+    char email[256];
+    tw_auth_bearer_email(req, email, sizeof(email));
     cJSON *user = tw_user_load();
     if (!user) {
         return send_error(req, "400 Bad Request", "No user");
@@ -790,40 +837,42 @@ static esp_err_t h_sync(httpd_req_t *req)
     log_req(req, "200");
     add_cors(req);
     httpd_resp_set_type(req, "application/json; charset=utf-8");
-    stream_sync(req, user);
+    stream_sync(req, user, email);
     cJSON_Delete(user);
     return httpd_resp_send_chunk(req, NULL, 0);
 }
 
-// POST /tw/backup from the status page: the whole vault, still encrypted, in the format of
+// POST /s/backup from the status page: the whole vault, still encrypted, in the format of
 // tools/tw_backup.py fetch (so its decrypt reads it). Needs the master password (as the login hash,
 // computed in the page; the password itself never reaches the board) and the BOOT button, checked
 // exactly like a login: failures count toward the wipe (SPEC 6).
 static esp_err_t h_backup(httpd_req_t *req)
 {
+    REQUIRE_SESSION(req);
     char confirm[16] = "";
-    httpd_req_get_hdr_value_str(req, "X-tinywarden-Confirm", confirm, sizeof(confirm));
+    httpd_req_get_hdr_value_str(req, "X-Confirm", confirm, sizeof(confirm));
     if (strcmp(confirm, "backup") != 0) {
         return send_error(req, "400 Bad Request", "Missing confirmation");
     }
     cJSON *body = read_json(req);
-    const cJSON *em = body ? cJSON_GetObjectItemCaseSensitive(body, "email") : NULL;
     const cJSON *mph = body ? cJSON_GetObjectItemCaseSensitive(body, "masterPasswordHash") : NULL;
-    if (!cJSON_IsString(em) || !cJSON_IsString(mph)) {
+    if (!cJSON_IsString(mph)) {
         cJSON_Delete(body);
-        return send_error(req, "400 Bad Request", "Email and master password are required");
+        return send_error(req, "400 Bad Request", "Username and master password are required");
     }
-    tw_login_result_t res = tw_auth_check_password(em->valuestring, mph->valuestring);
+    tw_login_result_t res = tw_auth_check_password(mph->valuestring);
     cJSON_Delete(body);
     switch (res) {
     case TW_LOGIN_OK:
         break;
+    case TW_LOGIN_OLD_FORMAT:
+        return send_error(req, "400 Bad Request", OLD_FORMAT_MSG);
     case TW_LOGIN_NO_BUTTON:
         return send_error(req, "400 Bad Request", "Button not pressed within 30 seconds");
     case TW_LOGIN_WIPED:
-        return send_error(req, "400 Bad Request", "Too many failed attempts. This tinywarden has been erased");
+        return send_error(req, "400 Bad Request", "Too many failed attempts. The device has been erased");
     default:
-        return send_error(req, "400 Bad Request", "Email or master password is incorrect");
+        return send_error(req, "400 Bad Request", "Username or master password is incorrect");
     }
     cJSON *user = tw_user_load();
     if (!user) {
@@ -835,9 +884,9 @@ static esp_err_t h_backup(httpd_req_t *req)
     cJSON *head = cJSON_CreateObject();
     char iso[32];
     tw_now_iso(iso);
-    cJSON_AddNumberToObject(head, "tinywarden_backup", 1);
+    // Version 2: no email. Opening it needs the username, typed in (tools/tw_backup.py, the merge page).
+    cJSON_AddNumberToObject(head, "tinywarden_backup", 2);
     cJSON_AddStringToObject(head, "saved", iso);
-    cJSON_AddItemToObject(head, "email", dup_or_null(user, "email"));
     cJSON *pre = cJSON_AddObjectToObject(head, "prelogin");
     cJSON_AddItemToObject(pre, "kdf", dup_or_null(user, "kdf"));
     cJSON_AddItemToObject(pre, "kdfIterations", dup_or_null(user, "kdfIterations"));
@@ -853,16 +902,16 @@ static esp_err_t h_backup(httpd_req_t *req)
     httpd_resp_sendstr_chunk(req, h);
     free(h);
     httpd_resp_sendstr_chunk(req, ",\"sync\":");
-    stream_sync(req, user);
+    stream_sync(req, user, NULL);
     httpd_resp_sendstr_chunk(req, "}");
     cJSON_Delete(user);
     return httpd_resp_send_chunk(req, NULL, 0);
 }
 
 // ---------- changing the KDF (status page) ----------
-// Two steps under one BOOT press. 1: POST /tw/kdf/key checks the current password (button, failure
+// Two steps under one BOOT press. 1: POST /s/kdf/key checks the current password (button, failure
 // counter) and returns the user key as it is now wrapped, with a one-time token. The page unwraps it
-// with the old master key, derives the new one and wraps it again, then 2: POST /tw/kdf with the token
+// with the old master key, derives the new one and wraps it again, then 2: POST /s/kdf with the token
 // stores the new wrapping, KDF settings and login hash (tw_auth_set_master). The board never sees the
 // password or the user key.
 #define KDF_TOKEN_MS (120 * 1000)
@@ -896,29 +945,31 @@ static bool is_enc2(const char *s)
 
 static esp_err_t h_kdf_key(httpd_req_t *req)
 {
+    REQUIRE_SESSION(req);
     char confirm[16] = "";
-    httpd_req_get_hdr_value_str(req, "X-tinywarden-Confirm", confirm, sizeof(confirm));
+    httpd_req_get_hdr_value_str(req, "X-Confirm", confirm, sizeof(confirm));
     if (strcmp(confirm, "kdf") != 0) {
         return send_error(req, "400 Bad Request", "Missing confirmation");
     }
     cJSON *body = read_json(req);
-    const cJSON *em = body ? cJSON_GetObjectItemCaseSensitive(body, "email") : NULL;
     const cJSON *mph = body ? cJSON_GetObjectItemCaseSensitive(body, "masterPasswordHash") : NULL;
-    if (!cJSON_IsString(em) || !cJSON_IsString(mph)) {
+    if (!cJSON_IsString(mph)) {
         cJSON_Delete(body);
-        return send_error(req, "400 Bad Request", "Email and master password are required");
+        return send_error(req, "400 Bad Request", "Username and master password are required");
     }
-    tw_login_result_t res = tw_auth_check_password(em->valuestring, mph->valuestring);
+    tw_login_result_t res = tw_auth_check_password(mph->valuestring);
     cJSON_Delete(body);
     switch (res) {
     case TW_LOGIN_OK:
         break;
+    case TW_LOGIN_OLD_FORMAT:
+        return send_error(req, "400 Bad Request", OLD_FORMAT_MSG);
     case TW_LOGIN_NO_BUTTON:
         return send_error(req, "400 Bad Request", "Button not pressed within 30 seconds");
     case TW_LOGIN_WIPED:
-        return send_error(req, "400 Bad Request", "Too many failed attempts. This tinywarden has been erased");
+        return send_error(req, "400 Bad Request", "Too many failed attempts. The device has been erased");
     default:
-        return send_error(req, "400 Bad Request", "Email or master password is incorrect");
+        return send_error(req, "400 Bad Request", "Username or master password is incorrect");
     }
     cJSON *user = tw_user_load();
     if (!user) {
@@ -942,8 +993,9 @@ static esp_err_t h_kdf_key(httpd_req_t *req)
 
 static esp_err_t h_kdf(httpd_req_t *req)
 {
+    REQUIRE_SESSION(req);
     char confirm[16] = "";
-    httpd_req_get_hdr_value_str(req, "X-tinywarden-Confirm", confirm, sizeof(confirm));
+    httpd_req_get_hdr_value_str(req, "X-Confirm", confirm, sizeof(confirm));
     if (strcmp(confirm, "kdf") != 0) {
         return send_error(req, "400 Bad Request", "Missing confirmation");
     }
@@ -1406,7 +1458,7 @@ static esp_err_t h_ciphers_import(httpd_req_t *req)
     size_t limit = import_limit();
     if (req->content_len > limit) {
         char msg[160];
-        snprintf(msg, sizeof(msg), "Import file is too large for tinywarden (%u KB, limit %u KB). Split it and import in parts.",
+        snprintf(msg, sizeof(msg), "Import file is too large for the device (%u KB, limit %u KB). Split it and import in parts.",
                  (unsigned)(req->content_len / 1024), (unsigned)(limit / 1024));
         return send_import_error(req, "400 Bad Request", msg);
     }
@@ -1508,7 +1560,7 @@ static esp_err_t h_ciphers_import(httpd_req_t *req)
         tw_store_stats_t st;
         tw_store_stats(&st);
         char msg[200];
-        snprintf(msg, sizeof(msg), "Not enough space on tinywarden: this import needs about %u KB but %u KB are free "
+        snprintf(msg, sizeof(msg), "Not enough space on the device: this import needs about %u KB but %u KB are free "
                  "(%d items). Nothing was imported. See https://" TW_IP_STR "/ for capacity.",
                  (unsigned)(need / 1024), (unsigned)(st.free_bytes / 1024), n_ciphers);
         free(buf); free(ctx.folder_of); free(ctx.folder_ids); free(folder_new);
@@ -1545,7 +1597,7 @@ static esp_err_t h_ciphers_import(httpd_req_t *req)
     }
     s_imp_running = false;
     s_imp_finished_s = (uint32_t)(esp_timer_get_time() / 1000000);
-    snprintf(s_imp_result, sizeof(s_imp_result), "%s: %d / %d items, %u s", ctx.failed ? "failed" : "done",
+    snprintf(s_imp_result, sizeof(s_imp_result), "%s: %d / %d, %u s", ctx.failed ? "failed" : "done",
              ctx.written, n_ciphers, (unsigned)(s_imp_finished_s - s_imp_started_s));
     free(buf);
     free(ctx.folder_of);
@@ -1563,12 +1615,13 @@ static esp_err_t h_ciphers_import(httpd_req_t *req)
     return httpd_resp_send(req, NULL, 0);
 }
 
-// POST /tw/wipe from the status page. Needs the BOOT button, so nothing on the Mac can wipe it unattended.
+// POST /s/wipe from the status page. Needs the BOOT button, so nothing on the Mac can wipe it unattended.
 // The custom header forces a CORS preflight, which other web origins fail, so a web page cannot start it.
 static esp_err_t h_wipe(httpd_req_t *req)
 {
+    REQUIRE_SESSION(req);
     char confirm[16] = "";
-    httpd_req_get_hdr_value_str(req, "X-tinywarden-Confirm", confirm, sizeof(confirm));
+    httpd_req_get_hdr_value_str(req, "X-Confirm", confirm, sizeof(confirm));
     if (strcmp(confirm, "wipe-all") != 0) {
         return send_error(req, "400 Bad Request", "Missing confirmation");
     }
@@ -1580,7 +1633,63 @@ static esp_err_t h_wipe(httpd_req_t *req)
         return send_error(req, "500 Internal Server Error", "Wipe failed");
     }
     s_imp_total = -1;
+    sessions_clear();
     return send_raw(req, "200 OK", "{\"wiped\":true}");
+}
+
+// POST /s/unlock {"masterPasswordHash"}: the login hash, computed in the locked page (/web/unlock.js).
+// Before an account exists: {"setupCode"}, the one-time code the flasher showed.
+static esp_err_t h_unlock(httpd_req_t *req)
+{
+    char confirm[16] = "";
+    httpd_req_get_hdr_value_str(req, "X-Confirm", confirm, sizeof(confirm));
+    if (strcmp(confirm, "unlock") != 0) {
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "not found");
+        return ESP_OK;
+    }
+    cJSON *body = read_json(req);
+    const cJSON *mph = body ? cJSON_GetObjectItemCaseSensitive(body, "masterPasswordHash") : NULL;
+    const cJSON *code = body ? cJSON_GetObjectItemCaseSensitive(body, "setupCode") : NULL;
+    tw_login_result_t res = cJSON_IsString(mph)    ? tw_auth_check_password(mph->valuestring)
+                            : cJSON_IsString(code) ? tw_auth_check_setup(code->valuestring)
+                                                   : TW_LOGIN_BAD;
+    cJSON_Delete(body);
+    switch (res) {
+    case TW_LOGIN_OK:
+        break;
+    case TW_LOGIN_OLD_FORMAT:
+        return send_error(req, "400 Bad Request", OLD_FORMAT_MSG);
+    case TW_LOGIN_NO_BUTTON:
+        return send_error(req, "400 Bad Request", "Button not pressed within 30 seconds");
+    case TW_LOGIN_WIPED:
+        return send_error(req, "400 Bad Request", "Too many failed attempts. The device has been erased");
+    default:
+        return send_error(req, "400 Bad Request", "Username or master password is incorrect");
+    }
+    uint8_t raw[32];
+    tw_random(raw, sizeof(raw));
+    char *tok = s_sess[s_sess_next];
+    tw_b64url_encode(raw, sizeof(raw), tok, sizeof(s_sess[0]));
+    s_sess_until[s_sess_next] = esp_timer_get_time() / 1000 + SESS_MS;
+    s_sess_next = (s_sess_next + 1) % SESS_N;
+    char cookie[128];
+    snprintf(cookie, sizeof(cookie), "sid=%s; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=%d", tok, SESS_MS / 1000);
+    httpd_resp_set_hdr(req, "Set-Cookie", cookie);
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return send_raw(req, "200 OK", "{\"ok\":true}");
+}
+
+// POST /s/lock: end this session (the page's lock button)
+static esp_err_t h_lock(httpd_req_t *req)
+{
+    char ck[256];
+    if (tw_status_session_ok(req) && httpd_req_get_hdr_value_str(req, "Cookie", ck, sizeof(ck)) == ESP_OK) {
+        for (int i = 0; i < SESS_N; i++) {
+            if (s_sess[i][0] && strstr(ck, s_sess[i])) s_sess[i][0] = '\0';
+        }
+    }
+    httpd_resp_set_hdr(req, "Set-Cookie", "sid=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0");
+    return send_raw(req, "200 OK", "{\"ok\":true}");
 }
 
 static const char *reset_reason_str(void)
@@ -1602,7 +1711,8 @@ static const char *reset_reason_str(void)
 }
 
 // ---------- status page (GET / on HTTPS) ----------
-// No login: shows only what is harmless to anyone at the USB link. Never the email or any vault content.
+// Needs a session (POST /s/unlock); without one, status_locked. Never vault content (the board does not know
+// the email at all). Counts and recent changes need the store unlocked by a login since the last start.
 
 static char s_cert_fp[96];  // SHA-256 of the CA certificate (the one people trust), AA:BB:...
 
@@ -1635,8 +1745,44 @@ static void chunkf(httpd_req_t *req, const char *fmt, ...)
     httpd_resp_sendstr_chunk(req, line);
 }
 
+// Before unlocking: device information only, no name, nothing about what it stores
+static esp_err_t status_locked(httpd_req_t *req)
+{
+    uint32_t up = (uint32_t)(esp_timer_get_time() / 1000000);
+    const esp_app_desc_t *app = esp_app_get_description();
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "Content-Security-Policy", TW_PAGE_CSP);
+    httpd_resp_sendstr_chunk(req,
+        "<!doctype html><html lang=ja><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<title>Device</title><style>"
+        ":root{--bg:#fff;--fg:#1a1a1a;--mute:#666;--line:#ddd}"
+        "@media(prefers-color-scheme:dark){:root{--bg:#161616;--fg:#eee;--mute:#999;--line:#333}}"
+        "body{background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,'Hiragino Sans',sans-serif;max-width:560px;margin:0 auto;padding:16px}"
+        "table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left;vertical-align:top}"
+        "th{color:var(--mute);font-weight:normal;width:40%}code{font-size:12px;word-break:break-all}input,button{font:inherit}"
+        "</style><table>");
+    chunkf(req, "<tr><th>チップ</th><td>ESP32-S3</td></tr><tr><th>版</th><td>%s</td></tr>", app->version);
+    chunkf(req, "<tr><th>起動してから</th><td>%u 時間 %u 分</td></tr>", (unsigned)(up / 3600), (unsigned)(up / 60 % 60));
+    chunkf(req, "<tr><th>空きメモリ</th><td>%u KB</td></tr>", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_DEFAULT) / 1024));
+    chunkf(req, "<tr><th>証明書 SHA-256</th><td><code>%s</code></td></tr></table>", s_cert_fp);
+    if (tw_user_exists()) {
+        httpd_resp_sendstr_chunk(req,
+            "<p><label>ユーザー名 <input id=uu type=email autocomplete=username size=24></label><br>"
+            "<label>パスワード <input id=up type=password autocomplete=current-password size=24></label><br>");
+    } else {
+        httpd_resp_sendstr_chunk(req, "<p><label>コード <input id=uc autocomplete=off size=16></label><br>");
+    }
+    httpd_resp_sendstr_chunk(req, "<button id=ub>解除</button></p><p id=um></p>"
+        "<script type=module src=/web/unlock.js></script></html>");
+    return httpd_resp_send_chunk(req, NULL, 0);
+}
+
 static esp_err_t h_status(httpd_req_t *req)
 {
+    if (!tw_status_session_ok(req)) {
+        return status_locked(req);
+    }
     tw_store_stats_t st;
     tw_store_stats(&st);
     uint32_t up = (uint32_t)(esp_timer_get_time() / 1000000);
@@ -1656,7 +1802,8 @@ static esp_err_t h_status(httpd_req_t *req)
         "table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left;vertical-align:top}"
         "th{color:var(--mute);font-weight:normal;width:40%}code{font-size:12px;word-break:break-all}"
         ".ok{color:var(--ok)}.ng{color:var(--ng)}.mute{color:var(--mute)}"
-        "</style><h1>tinywarden</h1>");
+        "</style><h1>tinywarden</h1><p><a href=/manual>使い方（マニュアル）</a> · <a href=/manual#en>Manual (English)</a></p>"
+        "<p><button id=lb>鍵を掛ける</button> <span class=mute>（30分たつと自動で掛かります）</span></p>");
 #if CONFIG_TW_DEV_DOWNLOAD_ENDPOINT
     httpd_resp_sendstr_chunk(req, "<p class=ng><b>開発用ビルド</b>：テスト用の機能が有効です。本物の保管庫には使わないでください。</p>");
 #endif
@@ -1678,8 +1825,17 @@ static esp_err_t h_status(httpd_req_t *req)
         }
         cJSON_Delete(ku);
     }
-    chunkf(req, "<tr><th>項目</th><td>%u 件</td></tr><tr><th>フォルダ</th><td>%u 個</td></tr>",
-           (unsigned)st.ciphers, (unsigned)st.folders);
+    if (st.unlocked) {
+        chunkf(req, "<tr><th>項目</th><td>%u 件</td></tr><tr><th>フォルダ</th><td>%u 個</td></tr>",
+               (unsigned)st.ciphers, (unsigned)st.folders);
+        if (st.unreadable) {
+            chunkf(req, "<tr><th>開けない記録</th><td>%u 件 <span class=mute>（前のアカウントの残り。全部消すと片付きます）</span></td></tr>",
+                   (unsigned)st.unreadable);
+        }
+    } else if (tw_user_exists()) {
+        chunkf(req, "<tr><th>中身</th><td>鍵がかかっています <span class=mute>（記録 %u 件。どれが項目かは、どこかの端末でログインするまで機器にも分かりません）</span></td></tr>",
+               (unsigned)st.records);
+    }
     chunkf(req, "<tr><th>保存領域</th><td>%u KB 中 %u KB 使用、%u KB 空き</td></tr>",
            (unsigned)(st.capacity / 1024), (unsigned)(st.live_bytes / 1024), (unsigned)(st.free_bytes / 1024));
     chunkf(req, "<tr><th>あと入る件数（目安）</th><td>約 %u 件 <span class=mute>（1件 平均 %d バイトとして。長いメモやパスキーはもっと使う）</span></td></tr>",
@@ -1734,23 +1890,32 @@ static esp_err_t h_status(httpd_req_t *req)
         }
         httpd_resp_sendstr_chunk(req, "</td></tr>");
     }
-    httpd_resp_sendstr_chunk(req, "</table><h2>最近の変更</h2><table><tr><th>日時（UTC）</th><th>内容</th></tr>");
+    httpd_resp_sendstr_chunk(req, "</table><h2>最近の変更</h2>");
+    if (!st.unlocked) {
+        httpd_resp_sendstr_chunk(req, "<p class=mute>ログインするまで出せません（日時も種類も、暗号化して保存しています）。</p><table>");
+    } else {
+        httpd_resp_sendstr_chunk(req, "<table><tr><th>日時（UTC）</th><th>内容</th></tr>");
+    }
     tw_store_change_t ch[20];
     int nch = tw_store_recent(ch, 20);
     for (int i = 0; i < nch; i++) {
-        time_t t = ch[i].time;
-        struct tm tmv;
-        gmtime_r(&t, &tmv);
-        char when[24];
-        strftime(when, sizeof(when), "%Y-%m-%d %H:%M", &tmv);
-        chunkf(req, "<tr><td>%s</td><td>%s %s <code>%.8s…</code></td></tr>", when, ch[i].kind, ch[i].op, ch[i].id);
+        char when[24] = "—";
+        if (ch[i].time) {
+            time_t t = ch[i].time;
+            struct tm tmv;
+            gmtime_r(&t, &tmv);
+            strftime(when, sizeof(when), "%Y-%m-%d %H:%M", &tmv);
+        }
+        chunkf(req, "<tr><td>%s</td><td>%s %s <code>%.8s%s</code></td></tr>", when, ch[i].kind, ch[i].op, ch[i].id,
+               ch[i].id[0] ? "…" : "");
     }
     httpd_resp_sendstr_chunk(req, "</table><p class=mute>BOOTボタン待ちのあいだ（最大30秒）は、このページも応答しません。</p>"
         "<h2>控えを保存</h2><p>保管庫を<b>暗号化したまま</b>1つのファイルに保存します（アプリは要りません）。"
         "戻すときは <code>tools/tw_backup.py decrypt</code> で、BitwardenやVaultwardenに読み込める形にします。"
-        "保存には、メールアドレスとマスターパスワード、BOOTボタンが要ります（ログインと同じ。間違いは失敗の回数に数え、10回で全部消えます）。"
+        "保存には、ユーザー名（メール）とマスターパスワード、BOOTボタンが要ります（ログインと同じ。間違いは失敗の回数に数え、10回で全部消えます）。"
+        "控えのファイルにはユーザー名を書きません。開くときにまた入れます。"
         "マスターパスワードはこのページの中でログイン用のハッシュにしてから送るので、機器には届きません。</p>"
-        "<p><label>メール <input id=be type=email autocomplete=username size=24></label><br>"
+        "<p><label>ユーザー名（メール） <input id=be type=email autocomplete=username size=24></label><br>"
         "<label>マスターパスワード <input id=bp type=password autocomplete=current-password size=24></label><br>"
         "<button id=bb>控えを保存</button></p><p id=bm></p>"
         "<p>控えをインポートできる形に変える、2つの保管庫を比べて1つにまとめる: <a href=/merge>保管庫をまとめる</a>"
@@ -1759,7 +1924,7 @@ static esp_err_t h_status(httpd_req_t *req)
         "保管庫の鍵の包み方だけが変わります。<b>Argon2id</b>は、盗まれた暗号文を総当たりされるときに、PBKDF2よりずっと時間がかかります。"
         "計算はこのページの中で行い、マスターパスワードと保管庫の鍵は機器に届きません。"
         "変えると、<b>すべての機器がログアウト</b>します。ログインし直してください。先に「控えを保存」で控えを取っておいてください。</p>"
-        "<p><label>メール <input id=ke type=email autocomplete=username size=24></label><br>"
+        "<p><label>ユーザー名（メール） <input id=ke type=email autocomplete=username size=24></label><br>"
         "<label>マスターパスワード <input id=kp type=password autocomplete=current-password size=24></label><br>"
         "<label>変えた後 <select id=kt><option value=argon2id>Argon2id（メモリ32MB、6回、並列4。おすすめ）</option>"
         "<option value=pbkdf2>PBKDF2（60万回）</option></select></label><br>"
@@ -1843,7 +2008,7 @@ static void selftest_task(void *arg)
     tw_store_stats(&st);
     if (len < sizeof(s_selftest) - 120) {
         snprintf(s_selftest + len, sizeof(s_selftest) - len,
-                 "done in %u ms; gc runs %u; live %u KB, stale %u KB. Delete with POST /tw/dev/selftest-clean\n",
+                 "done in %u ms; gc runs %u; live %u KB, stale %u KB. Delete with POST /s/dev/selftest-clean\n",
                  (unsigned)((esp_timer_get_time() - t0) / 1000), (unsigned)(st.gc_runs - st0.gc_runs),
                  (unsigned)(st.live_bytes / 1024), (unsigned)(st.stale_bytes / 1024));
     }
@@ -1900,14 +2065,14 @@ static esp_err_t h_dev_download(httpd_req_t *req)
 }
 #endif
 
-// ---------- HTTP (port 80): certificate download only ----------
+// ---------- HTTP (port 80): certificate download and import progress ----------
 
 static const char *s_cert_pem;
 
 static esp_err_t h_cert(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "application/x-x509-ca-cert");
-    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"tinywarden.crt\"");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"ca.crt\"");
     return httpd_resp_sendstr(req, s_cert_pem);
 }
 
@@ -1915,15 +2080,16 @@ static esp_err_t h_cert(httpd_req_t *req)
 static char s_selftest[1536];
 #endif
 
-// Import progress on port 80: answers while the HTTPS task is busy. Counts only, no vault content.
+// Import progress on port 80: answers while the HTTPS task is busy. Counts only, and worded so it does not
+// say what the device is (anyone at the USB link can read it).
 static esp_err_t h_progress(httpd_req_t *req)
 {
     char out[256];
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000000);
     if (s_imp_total < 0) {
-        snprintf(out, sizeof(out), "no import since boot\n");
+        snprintf(out, sizeof(out), "idle\n");
     } else if (s_imp_running) {
-        snprintf(out, sizeof(out), "importing: %d / %d items (%d%%), %u s\n", s_imp_written, s_imp_total,
+        snprintf(out, sizeof(out), "working: %d / %d (%d%%), %u s\n", s_imp_written, s_imp_total,
                  s_imp_total ? s_imp_written * 100 / s_imp_total : 100, (unsigned)(now - s_imp_started_s));
     } else {
         snprintf(out, sizeof(out), "%s\n", s_imp_result);
@@ -1957,7 +2123,7 @@ esp_err_t tw_api_start(void)
     const char *cert, *key, *ca;
     size_t cert_len, key_len;
     ESP_ERROR_CHECK(tw_tls_load_or_create(&cert, &cert_len, &key, &key_len, &ca));
-    s_cert_pem = ca;  // GET /tinywarden.crt hands out the CA certificate
+    s_cert_pem = ca;  // GET /ca.crt hands out the CA certificate
     compute_cert_fp(ca);
 
     httpd_ssl_config_t conf = HTTPD_SSL_CONFIG_DEFAULT();
@@ -1985,10 +2151,13 @@ esp_err_t tw_api_start(void)
         {"/alive", HTTP_GET, h_alive, NULL},
         {"/web/*", HTTP_GET, tw_web_file, NULL},
         {"/merge", HTTP_GET, tw_web_file, NULL},
-        {"/tw/wipe", HTTP_POST, h_wipe, NULL},
-        {"/tw/backup", HTTP_POST, h_backup, NULL},
-        {"/tw/kdf/key", HTTP_POST, h_kdf_key, NULL},
-        {"/tw/kdf", HTTP_POST, h_kdf, NULL},
+        {"/manual", HTTP_GET, tw_web_manual, NULL},
+        {"/s/wipe", HTTP_POST, h_wipe, NULL},
+        {"/s/unlock", HTTP_POST, h_unlock, NULL},
+        {"/s/lock", HTTP_POST, h_lock, NULL},
+        {"/s/backup", HTTP_POST, h_backup, NULL},
+        {"/s/kdf/key", HTTP_POST, h_kdf_key, NULL},
+        {"/s/kdf", HTTP_POST, h_kdf, NULL},
         {"/api/config", HTTP_GET, h_config, NULL},
         {"/identity/accounts/prelogin*", HTTP_POST, h_prelogin, NULL},
         {"/identity/accounts/register/send-verification-email", HTTP_POST, h_register_email, NULL},
@@ -2014,10 +2183,10 @@ esp_err_t tw_api_start(void)
     }
 #if CONFIG_TW_DEV_DOWNLOAD_ENDPOINT
     const httpd_uri_t dev_routes[] = {
-        {"/tw/dev/download-mode", HTTP_POST, h_dev_download, NULL},
-        {"/tw/dev/selftest", HTTP_POST, h_dev_selftest, NULL},
-        {"/tw/dev/reboot", HTTP_POST, h_dev_reboot, NULL},
-        {"/tw/dev/selftest-clean", HTTP_POST, h_dev_selftest_clean, NULL},
+        {"/s/dev/download-mode", HTTP_POST, h_dev_download, NULL},
+        {"/s/dev/selftest", HTTP_POST, h_dev_selftest, NULL},
+        {"/s/dev/reboot", HTTP_POST, h_dev_reboot, NULL},
+        {"/s/dev/selftest-clean", HTTP_POST, h_dev_selftest_clean, NULL},
     };
     for (size_t i = 0; i < sizeof(dev_routes) / sizeof(dev_routes[0]); i++) {
         httpd_register_uri_handler(https, &dev_routes[i]);
@@ -2036,7 +2205,7 @@ esp_err_t tw_api_start(void)
     if (s_http_err != ESP_OK) {
         ESP_LOGE(TAG, "http start failed: %s", esp_err_to_name(s_http_err));
     } else {
-        const httpd_uri_t cert_route = {"/tinywarden.crt", HTTP_GET, h_cert, NULL};
+        const httpd_uri_t cert_route = {"/ca.crt", HTTP_GET, h_cert, NULL};
         const httpd_uri_t other = {"/*", HTTP_GET, h_http_other, NULL};
         httpd_register_uri_handler(http, &cert_route);
         const httpd_uri_t progress_route = {"/progress", HTTP_GET, h_progress, NULL};

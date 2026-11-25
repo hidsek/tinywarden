@@ -486,7 +486,7 @@ int ls_mount(ls_store_t **out, const ls_flash_t *flash)
             if (h->magic == 0xffffffffu) break;  // clean end of the written part
             bool ok = h->magic == REC_MAGIC && h->len <= LS_MAX_PAYLOAD &&
                       off + ls_record_size(h->len) <= LS_SEG_SIZE && h->kind >= LS_KIND_USER &&
-                      h->kind <= LS_KIND_TEST && (h->op == LS_OP_PUT || h->op == LS_OP_DEL);
+                      h->kind < LS_KIND_N && (h->op == LS_OP_PUT || h->op == LS_OP_DEL);
             ok = ok && ls->fl.read(ls->fl.ctx, seg_base(s) + off + LS_REC_HDR, ls->buf + LS_REC_HDR, h->len) == 0;
             ok = ok && rec_crc(h, ls->buf + LS_REC_HDR) == h->crc;
             if (!ok) {
@@ -639,7 +639,7 @@ void ls_get_stats(ls_store_t *ls, ls_stats_t *st)
     st->stale_bytes = used > st->live_bytes ? used - st->live_bytes : 0;
     st->segs_total = (uint16_t)ls->nseg;
     for (uint32_t i = 0; i < ls->nent; i++) {
-        if (!ls->ent[i].deleted && ls->ent[i].kind < 5) st->count[ls->ent[i].kind]++;
+        if (!ls->ent[i].deleted && ls->ent[i].kind < LS_KIND_N) st->count[ls->ent[i].kind]++;
     }
     st->gc_runs = ls->gc_runs;
     st->torn_records = ls->torn;

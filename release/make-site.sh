@@ -21,7 +21,8 @@ WORK="$(mktemp -d)"
 IDX="$(mktemp -d)/index"
 trap 'rm -rf "$WORK" "$(dirname "$IDX")"' EXIT
 cp "$ART/$BIN" "$WORK/"
-sed -e "s/{{VERSION}}/$V/g" -e "s/{{SHA256}}/$SHA/g" "$REL/site/index.html" > "$WORK/index.html"
+sed -e "s/{{VERSION}}/$V/g" -e "s/{{SHA256}}/$SHA/g" -e "s/{{BIN}}/$BIN/g" "$REL/site/index.html" > "$WORK/index.html"
+# manifest.json: for esptool users and as a fallback; the page builds its own with the setup code
 cat > "$WORK/manifest.json" <<JSON
 {
   "name": "tinywarden",

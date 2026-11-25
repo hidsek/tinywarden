@@ -9,6 +9,11 @@ and an empty board (no user). It creates a throwaway account, so never run it on
   python3 -I test/device/device_test.py               # full run (about 10 minutes)
   python3 -I test/device/device_test.py --quick       # skip the GC stress rounds
   python3 -I test/device/device_test.py --wipe-first  # wipe the board before starting
+  python3 -I test/device/device_test.py --check-dump dump.bin   # a flash dump taken after a run
+
+--check-dump reads a copy of the storage partition (esptool read_flash 0x110000 0x2F0000 dump.bin, taken
+after a run with --keep) and checks that none of the test's plaintext markers are in it: the username,
+the registration name, the JSON field names of items and folders.
 
 The payload is synthetic: random bytes shaped like Bitwarden EncStrings. The board never decrypts
 anything, so this exercises the same paths as a real vault of the same size.
@@ -36,6 +41,7 @@ CTX.check_hostname = False  # the board's certificate is for an IP; trust is not
 CTX.verify_mode = ssl.CERT_NONE
 
 results = []
+SESSION = {}  # {"Cookie": "sid=..."} after unlock_status()
 
 
 def req(method, url, body=None, headers=None, timeout=60):
@@ -62,14 +68,29 @@ def check(name, ok, detail=""):
     return ok
 
 
-def status_page():
-    code, body = req("GET", BASE + "/")
+def status_page(session=True):
+    code, body = req("GET", BASE + "/", headers=SESSION if session else None)
     return code, body.decode("utf-8", "replace")
 
 
-def login():
+def unlock_status(body=None):
+    """POST /s/unlock like the locked page does; keeps the session cookie for the status page and its tools."""
+    body = body or {"masterPasswordHash": PW_HASH}
+    r = urllib.request.Request(BASE + "/s/unlock", data=json.dumps(body).encode(), method="POST",
+                               headers={"X-Confirm": "unlock", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(r, context=CTX, timeout=60) as resp:
+            ck = resp.headers.get("Set-Cookie", "")
+            SESSION.clear()
+            SESSION["Cookie"] = ck.split(";")[0]
+            return resp.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
+def login(username=EMAIL):
     form = urllib.parse.urlencode({
-        "grant_type": "password", "username": EMAIL, "password": PW_HASH, "scope": "api offline_access",
+        "grant_type": "password", "username": username, "password": PW_HASH, "scope": "api offline_access",
         "client_id": "web", "deviceType": "10", "deviceIdentifier": DEVICE_ID, "deviceName": "device-test",
     })
     code, body = req("POST", BASE + "/identity/connect/token", form,
@@ -123,7 +144,7 @@ def wait_alive(seconds=60):
 
 
 def selftest_round(n):
-    req("POST", f"{BASE}/tw/dev/selftest?n={n}")
+    req("POST", f"{BASE}/s/dev/selftest?n={n}")
     for _ in range(400):
         _, body = req("GET", HTTP + "/progress", timeout=5)
         text = body.decode()
@@ -142,22 +163,45 @@ def main():
     ap.add_argument("--quick", action="store_true", help="skip the GC stress rounds")
     ap.add_argument("--wipe-first", action="store_true", help="wipe the board before starting")
     ap.add_argument("--items", type=int, default=800)
+    ap.add_argument("--keep", action="store_true", help="do not wipe at the end (to take a flash dump)")
+    ap.add_argument("--check-dump", metavar="FILE", help="check a flash dump for plaintext, then exit")
+    ap.add_argument("--setup-code", help="the code ./flash.sh --wipe printed (tests the one-time code)")
     args = ap.parse_args()
+    if args.check_dump:
+        return check_dump(args.check_dump)
 
-    # 0. Preconditions
-    code, page = status_page()
+    # 0. Preconditions. The status page is locked: it must not say what the device is
+    code, page = status_page(session=False)
     if not check("status page answers", code == 200, f"HTTP {code}"):
         return finish()
-    if not check("development build with button skip", "BOOTボタンの確認を省略中" in page,
-                 "flash a build with CONFIG_TW_DEV_SKIP_BUTTON=y"):
-        return finish()
+    check("locked status page shows no name and no vault information",
+          "tinywarden" not in page.lower() and "保管庫" not in page and "BOOT" not in page and "/web/unlock.js" in page)
+    for path in ("/merge", "/web/status.js", "/web/twcrypto.js", "/web/merge-ui.js"):
+        code, _ = req("GET", BASE + path)
+        check(f"{path} is hidden while locked", code == 404, f"HTTP {code}")
+    code, _ = req("POST", BASE + "/s/wipe", headers={"X-Confirm": "wipe-all"})
+    check("wipe needs the unlocked status page", code == 404, f"HTTP {code}")
     if args.wipe_first:
-        code, _ = req("POST", BASE + "/tw/wipe", headers={"X-Tinywarden-Confirm": "wipe-all"}, timeout=120)
-        check("wipe before start", code == 200, f"HTTP {code}")
+        if unlock_status() != 200:
+            print("note: could not unlock (no user yet?), wipe skipped")
+        else:
+            code, _ = req("POST", BASE + "/s/wipe", headers=dict(SESSION, **{"X-Confirm": "wipe-all"}), timeout=120)
+            check("wipe before start", code == 200, f"HTTP {code}")
     code, body = req("GET", BASE + "/api/config")
     if not check("board is empty (registration open)", code == 200 and not json.loads(body)["settings"]["disableUserRegistration"],
                  "use --wipe-first"):
         return finish()
+
+    # 0b. One-time setup code (before the account exists)
+    if args.setup_code:
+        check("locked page asks for the code while there is no account", 'id=uc' in status_page(session=False)[1])
+        check("a wrong setup code is refused", unlock_status({"setupCode": "AAAA-AAAA-AAAA"}) == 400)
+        check("the setup code opens the status page", unlock_status({"setupCode": args.setup_code.lower()}) == 200
+              and "/web/unlock.js" not in status_page()[1])
+        code, _ = req("GET", BASE + "/manual", headers=SESSION)
+        check("the manual opens with the session", code == 200, f"HTTP {code}")
+    code, _ = req("GET", BASE + "/manual")
+    check("the manual is hidden without a session", code == 404, f"HTTP {code}")
 
     # 1. Registration and login
     code, body = req("POST", BASE + "/identity/accounts/register/send-verification-email",
@@ -180,6 +224,33 @@ def main():
     login()  # resets the failure counter
     code, s, _ = sync(tok)
     check("sync of an empty vault", code == 200 and s["ciphers"] == [] and s["folders"] == [])
+    unlock = (s or {}).get("userDecryption", {}).get("masterPasswordUnlock", {})
+    check("profile email and salt come from the session", (s or {}).get("profile", {}).get("email") == EMAIL
+          and unlock.get("salt") == EMAIL, f"{(s or {}).get('profile', {}).get('email')} / {unlock.get('salt')}")
+
+    if args.setup_code:
+        check("the setup code stops working once the account exists",
+              unlock_status({"setupCode": args.setup_code}) == 400)
+    check("status page unlocks with the vault's password", unlock_status() == 200)
+    code, page = status_page()
+    if not check("development build with button skip", "BOOTボタンの確認を省略中" in page,
+                 "flash a build with CONFIG_TW_DEV_SKIP_BUTTON=y"):
+        return finish()
+
+    # 1b. The username is not stored: any one gets the same prelogin, and the session's own comes back
+    _, pre1 = req("POST", BASE + "/identity/accounts/prelogin", {"email": EMAIL})
+    _, pre2 = req("POST", BASE + "/identity/accounts/prelogin", {"email": "someone-else@example.invalid"})
+    check("prelogin is the same for any username", pre1 == pre2, pre1.decode()[:60])
+    other = "OTHER-name@example.invalid"
+    code, tok2 = login(other)  # the fake hash does not depend on the username, so this logs in
+    code, p, _ = sync(tok2) if tok2 else (code, None, 0)
+    check("the board echoes the session's username, it has none of its own",
+          p and p["profile"]["email"] == other.lower(), (p or {}).get("profile", {}).get("email", f"HTTP {code}"))
+    code, body = req("POST", BASE + "/s/backup", {"masterPasswordHash": PW_HASH},
+                     dict(SESSION, **{"X-Confirm": "backup"}), timeout=300)
+    b = json.loads(body) if code == 200 else {}
+    check("backup has no username (format 2)", code == 200 and b.get("tinywarden_backup") == 2 and "email" not in b
+          and EMAIL.encode() not in body and b["sync"]["profile"]["email"] is None, f"HTTP {code}")
 
     # 2. Import
     code, body = req("POST", BASE + "/api/ciphers/import", b"{not json", {"Authorization": "Bearer " + tok,
@@ -223,11 +294,18 @@ def main():
     compare("vault after edit and delete", s2)
 
     # 4. Reboot: the vault is read back from flash
-    req("POST", BASE + "/tw/dev/reboot")
+    req("POST", BASE + "/s/dev/reboot")
     time.sleep(4)
     check("board comes back after reboot", wait_alive())
     code, old = sync(tok)[:2]
     check("old token is rejected after reboot (per-boot signing key)", code == 401, f"HTTP {code}")
+    code, page = status_page()
+    check("a restart ends the status page session", "/web/unlock.js" in page)
+    code, body = req("GET", BASE + "/api/devices/knowndevice", headers={"X-Device-Identifier": DEVICE_ID})
+    check("known-device answers false while the store is locked", body == b"false", body.decode())
+    check("status page unlocks again", unlock_status() == 200)
+    code, page = status_page()
+    check("the status page knows the counts after the unlock", f"<th>項目</th><td>{args.items - 1} 件" in page)
     code, tok = login()
     code, s3, _ = sync(tok)
     compare("vault after reboot", s3)
@@ -238,14 +316,26 @@ def main():
             text = selftest_round(900)
             line = next((l for l in text.splitlines() if "done in" in l or "FAILED" in l), text[-120:])
             check(f"GC stress round {r + 1}: 900 records written", "done in" in text, line.strip())
-            code, body = req("POST", BASE + "/tw/dev/selftest-clean", timeout=600)
+            code, body = req("POST", BASE + "/s/dev/selftest-clean", timeout=600)
             check(f"GC stress round {r + 1}: cleaned", code == 200, body.decode().strip())
         code, s4, _ = sync(tok)
         compare("vault after GC stress", s4)
 
     # 6. Leave the board empty
-    code, _ = req("POST", BASE + "/tw/wipe", headers={"X-Tinywarden-Confirm": "wipe-all"}, timeout=120)
+    if args.keep:
+        print("left as is (--keep): take a dump, then run with --check-dump, then --wipe-first")
+        return finish()
+    code, _ = req("POST", BASE + "/s/wipe", headers=dict(SESSION, **{"X-Confirm": "wipe-all"}), timeout=120)
     check("wipe at the end", code == 200, f"HTTP {code}")
+    return finish()
+
+
+def check_dump(path):
+    data = open(path, "rb").read()
+    for marker in (EMAIL.encode(), b"device test", b"cipherDetails", b'"folderId"', b'"revisionDate"', b'"devices"',
+                   DEVICE_ID.encode()):
+        check(f"dump has no {marker.decode()!r}", marker not in data)
+    check("dump has the header (KDF settings are not secret)", b'"kdfIterations"' in data)
     return finish()
 
 

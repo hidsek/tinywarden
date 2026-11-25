@@ -26,10 +26,10 @@ static const char *TAG = "tls";
 // Bump when the certificates change; older ones in NVS are replaced on boot.
 // 1: one self-signed CA:FALSE certificate (iOS cannot trust it)
 // 4: CA (key discarded) + server certificate with serverAuth
-#define CERT_VERSION 4
+#define CERT_VERSION 5  // 5: names without the project name
 
-#define SERVER_NAME "CN=tinywarden " TW_IP_STR
-#define CA_NAME "CN=tinywarden CA " TW_IP_STR
+#define SERVER_NAME "CN=" TW_IP_STR
+#define CA_NAME "CN=Local CA " TW_IP_STR
 
 static char s_cert[PEM_MAX];
 static char s_key[PEM_MAX];
