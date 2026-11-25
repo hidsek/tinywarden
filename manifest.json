@@ -1,0 +1,8 @@
+{
+  "name": "tinywarden",
+  "version": "0.3.0",
+  "new_install_prompt_erase": true,
+  "builds": [
+    { "chipFamily": "ESP32-S3", "parts": [ { "path": "tinywarden-v0.3.0-esp32s3.bin", "offset": 0 } ] }
+  ]
+}
