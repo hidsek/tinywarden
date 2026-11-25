@@ -166,5 +166,15 @@ await check("format 2 backup (no username in the file) needs the username", asyn
   await rejects(tw.openTwBackup(b, "master pw", undefined, "someone-else@example.com"), tw.MacError);
 });
 
+// The locked page computes the login hash on its own (twcrypto.js is not served before unlocking)
+const { loginHash } = await import("../../firmware/web/unlock.js");
+for (const [label, pre] of [["PBKDF2", { kdf: 0, kdfIterations: 5000, kdfMemory: null, kdfParallelism: null }],
+  ["Argon2id", { kdf: 1, kdfIterations: 2, kdfMemory: 16, kdfParallelism: 1 }]]) {
+  await check(`unlock page login hash matches twcrypto (${label})`, async () => {
+    const want = await tw.masterPasswordHash(await tw.masterKey("pw ゆ", "Me@Example.com", pre), "pw ゆ");
+    eq(await loginHash(" me@example.com ", "pw ゆ", pre), want, "hash");
+  });
+}
+
 if (failed) { console.log(`${failed} failed`); process.exit(1); }
 console.log("all passed");

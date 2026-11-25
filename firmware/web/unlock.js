@@ -42,7 +42,7 @@ const MSG = {
   "Old format. Erase the device and set it up again": "古い形式です。消して作り直してください",
 };
 
-const $ = (id) => document.getElementById(id);
+const $ = (id) => (typeof document === "undefined" ? null : document.getElementById(id));  // null in tests
 
 async function post(body) {
   return fetch("/s/unlock", {
